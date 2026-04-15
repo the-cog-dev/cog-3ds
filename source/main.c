@@ -1,100 +1,311 @@
-// The Cog — Nintendo 3DS prototype (v0)
+// The Cog — Nintendo 3DS client (Phase 1: real connection, real data, text UI)
 //
-// Boots into a two-screen UI:
-//   - Top screen (400x240): branded title card + version + controls hint
-//   - Bottom screen (320x240, touchscreen): status pane with a heartbeat counter
-//     so you can confirm the app is alive
-//
-// This is the toolchain-validation step. No networking yet. Once this builds,
-// runs on the 3DS, and exits cleanly, we know our entire build → deploy →
-// execute pipeline works. Then we add the real features.
+// What works in this build:
+//   - Loads saved Remote View URL from sdmc:/3ds/cog-3ds/config.txt
+//   - If no saved URL: shows a setup screen telling you to scan a QR (Phase 1.5)
+//   - HTTP GET to <URL>/state every 5s, parses JSON
+//   - Bottom screen: agent list with status colors. D-pad to navigate, A to select
+//   - Top screen: selected agent's name / CLI / model / role / status / project name
 //
 // Controls:
-//   START   exit
-//   SELECT  reset heartbeat counter
+//   D-pad UP/DOWN  — navigate agent list
+//   A              — refresh now
+//   Y              — show URL info screen
+//   START          — exit
+//
+// Phase 2 will replace the consoles with citro2d for real card-based rendering
+// + theme colors. Phase 1.5 adds the QR scanner so you can scan instead of
+// hardcoding the URL on PC.
 
 #include <3ds.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
-int main(void) {
-    // Boot core 3DS services. gfxInitDefault() spins up framebuffers for both
-    // screens. consoleInit hooks printf to a screen-rendered text console — fast
-    // path to "I can see what my code is doing" without dragging in citro2d yet.
-    gfxInitDefault();
+#include "cJSON.h"
+#include "http.h"
+#include "config.h"
 
-    PrintConsole topScreen, bottomScreen;
-    consoleInit(GFX_TOP, &topScreen);
-    consoleInit(GFX_BOTTOM, &bottomScreen);
+#define MAX_AGENTS 32
 
-    // ── Top screen: branding ─────────────────────────────────────────────────
-    consoleSelect(&topScreen);
-    printf("\x1b[2J");  // clear screen
-    printf("\x1b[1;1H"); // move cursor to top-left
+typedef struct {
+    char id[64];
+    char name[64];
+    char cli[24];
+    char model[32];
+    char role[24];
+    char status[16];   // "working", "active", "idle", "disconnected"
+} AgentInfo;
 
+typedef struct {
+    char project_name[64];
+    AgentInfo agents[MAX_AGENTS];
+    int agent_count;
+    int connection_count;
+} CogState;
+
+static const char *STATUS_COLOR_CODE(const char *status) {
+    // ANSI color codes — match the desktop app's status palette
+    if (strcmp(status, "working") == 0) return "\x1b[33m";       // yellow
+    if (strcmp(status, "active") == 0) return "\x1b[32m";        // green
+    if (strcmp(status, "idle") == 0) return "\x1b[37m";          // white
+    if (strcmp(status, "disconnected") == 0) return "\x1b[31m";  // red
+    return "\x1b[37m";
+}
+
+// Pull a JSON string field, copy into dest with bounded length.
+static void json_get_string(cJSON *parent, const char *field, char *dest, size_t dest_size) {
+    cJSON *item = cJSON_GetObjectItemCaseSensitive(parent, field);
+    if (cJSON_IsString(item) && item->valuestring) {
+        strncpy(dest, item->valuestring, dest_size - 1);
+        dest[dest_size - 1] = '\0';
+    } else {
+        dest[0] = '\0';
+    }
+}
+
+// Parse the /state response into our struct. Returns true on success.
+static bool parse_state(const char *json_text, CogState *out) {
+    out->agent_count = 0;
+    out->connection_count = 0;
+    out->project_name[0] = '\0';
+
+    cJSON *root = cJSON_Parse(json_text);
+    if (!root) return false;
+
+    json_get_string(root, "projectName", out->project_name, sizeof(out->project_name));
+
+    cJSON *cc = cJSON_GetObjectItemCaseSensitive(root, "connectionCount");
+    if (cJSON_IsNumber(cc)) out->connection_count = cc->valueint;
+
+    cJSON *agents = cJSON_GetObjectItemCaseSensitive(root, "agents");
+    if (cJSON_IsArray(agents)) {
+        cJSON *agent = NULL;
+        cJSON_ArrayForEach(agent, agents) {
+            if (out->agent_count >= MAX_AGENTS) break;
+            AgentInfo *a = &out->agents[out->agent_count];
+            json_get_string(agent, "id", a->id, sizeof(a->id));
+            json_get_string(agent, "name", a->name, sizeof(a->name));
+            json_get_string(agent, "cli", a->cli, sizeof(a->cli));
+            json_get_string(agent, "model", a->model, sizeof(a->model));
+            json_get_string(agent, "role", a->role, sizeof(a->role));
+            json_get_string(agent, "status", a->status, sizeof(a->status));
+            out->agent_count++;
+        }
+    }
+
+    cJSON_Delete(root);
+    return true;
+}
+
+// Build the state URL by appending "state" to the config URL. Config is
+// expected to end with /r/<token>/ — so we just concatenate.
+static void build_state_url(const char *base_url, char *out, size_t out_size) {
+    snprintf(out, out_size, "%sstate", base_url);
+}
+
+// ── Rendering ────────────────────────────────────────────────────────────────
+
+static void render_setup_screen(PrintConsole *top, PrintConsole *bottom) {
+    consoleSelect(top);
+    printf("\x1b[2J\x1b[1;1H");
     printf("\n");
     printf("    \x1b[33m  ___  _____  ___\x1b[0m\n");
     printf("    \x1b[33m / _ \\| ____|/ _ \\\x1b[0m       The Cog\n");
-    printf("    \x1b[33m| (_) | |    | (_) |\x1b[0m       v0.1 prototype\n");
+    printf("    \x1b[33m| (_) | |    | (_) |\x1b[0m       v0.2 - first connection\n");
     printf("    \x1b[33m \\___/|_|     \\___/\x1b[0m\n");
     printf("\n");
-    printf("    \x1b[36mAI-native agent orchestration\x1b[0m\n");
-    printf("    \x1b[36mfrom your Nintendo 3DS\x1b[0m\n");
+    printf("    \x1b[31mNo Remote View URL saved.\x1b[0m\n");
     printf("\n");
-    printf("    --------------------------------\n");
+    printf("    To get connected:\n");
+    printf("    1. On your PC, open The Cog\n");
+    printf("    2. Settings -> Remote View -> Enable\n");
+    printf("    3. Toggle on \x1b[32mEnable LAN access\x1b[0m\n");
+    printf("    4. Copy the LAN URL (the http:// one)\n");
+    printf("    5. Save as: \x1b[36m/3ds/cog-3ds/config.txt\x1b[0m\n");
+    printf("       on your SD card\n");
     printf("\n");
-    printf("    \x1b[32mTOOLCHAIN OK\x1b[0m  Build pipeline verified.\n");
+    printf("    QR scanner coming in Phase 1.5\n");
+    printf("    so you won't have to type it.\n");
     printf("\n");
-    printf("    Next: HTTP client + agent list.\n");
-    printf("\n");
-    printf("    \x1b[37m[START]\x1b[0m   exit to Homebrew Launcher\n");
-    printf("    \x1b[37m[SELECT]\x1b[0m  reset heartbeat\n");
+    printf("    \x1b[37m[START]\x1b[0m  exit\n");
 
-    // ── Bottom screen: heartbeat ─────────────────────────────────────────────
-    consoleSelect(&bottomScreen);
-    printf("\x1b[2J");
+    consoleSelect(bottom);
+    printf("\x1b[2J\x1b[1;1H");
+    printf("\n  \x1b[33mSetup needed\x1b[0m\n\n");
+    printf("  Once config.txt is on your\n");
+    printf("  SD card, relaunch this app.\n");
+}
 
+static void render_main_screens(PrintConsole *top, PrintConsole *bottom,
+                                const CogState *state, int selected,
+                                const char *url) {
+    // ── Top: selected agent detail ───────────────────────────────────────────
+    consoleSelect(top);
+    printf("\x1b[2J\x1b[1;1H");
+    printf("\n");
+    printf("  \x1b[33m== The Cog : %s ==\x1b[0m\n", state->project_name);
+    printf("\n");
+    printf("  Agents: %d  |  Connections: %d\n", state->agent_count, state->connection_count);
+    printf("\n");
+    printf("  ----------------------------------\n");
+
+    if (state->agent_count == 0) {
+        printf("\n  \x1b[37mNo agents in workspace.\x1b[0m\n");
+        printf("  Spawn some on your PC.\n\n");
+    } else if (selected >= 0 && selected < state->agent_count) {
+        const AgentInfo *a = &state->agents[selected];
+        printf("\n  \x1b[1m%s%s\x1b[0m\n", STATUS_COLOR_CODE(a->status), a->name);
+        printf("\n");
+        printf("  CLI:     \x1b[36m%s\x1b[0m\n", a->cli);
+        printf("  Model:   \x1b[36m%s\x1b[0m\n", a->model[0] ? a->model : "(default)");
+        printf("  Role:    \x1b[36m%s\x1b[0m\n", a->role);
+        printf("  Status:  %s%s\x1b[0m\n", STATUS_COLOR_CODE(a->status), a->status);
+        printf("\n");
+        printf("  ----------------------------------\n");
+        printf("  \x1b[37mPhase 2 will show output here.\x1b[0m\n");
+    }
+
+    printf("\n");
+    printf("  \x1b[37m[A] refresh   [Y] url   [START] exit\x1b[0m\n");
+
+    // ── Bottom: agent list ───────────────────────────────────────────────────
+    consoleSelect(bottom);
+    printf("\x1b[2J\x1b[1;1H");
+    printf("\n  \x1b[33mAgents (D-pad to navigate)\x1b[0m\n\n");
+
+    if (state->agent_count == 0) {
+        printf("  \x1b[37m(empty)\x1b[0m\n\n");
+        printf("  \x1b[37mWaiting for agents...\x1b[0m\n");
+    } else {
+        for (int i = 0; i < state->agent_count; i++) {
+            const AgentInfo *a = &state->agents[i];
+            const char *cursor = (i == selected) ? "\x1b[33m>\x1b[0m" : " ";
+            const char *color = STATUS_COLOR_CODE(a->status);
+            // Status as a colored dot, then name
+            printf("  %s %s\xE2\x97\x8F\x1b[0m  %.20s\n", cursor, color, a->name);
+        }
+    }
+}
+
+// ── Main ─────────────────────────────────────────────────────────────────────
+
+int main(void) {
+    gfxInitDefault();
+
+    PrintConsole top, bottom;
+    consoleInit(GFX_TOP, &top);
+    consoleInit(GFX_BOTTOM, &bottom);
+
+    Result http_rc = cog_http_init();
+    if (R_FAILED(http_rc)) {
+        consoleSelect(&top);
+        printf("\n  \x1b[31mFailed to init httpc: %ld\x1b[0m\n", http_rc);
+        printf("  Press START to exit.\n");
+        while (aptMainLoop()) {
+            hidScanInput();
+            if (hidKeysDown() & KEY_START) break;
+            gspWaitForVBlank();
+        }
+        gfxExit();
+        return 1;
+    }
+
+    char url[COG_URL_MAX] = {0};
+    bool have_url = cog_config_load(url, sizeof(url));
+
+    CogState state = {0};
+    int selected = 0;
+    u32 last_poll_frame = 0;
     u32 frame = 0;
-    u32 lastTouch = 0;
+    bool dirty = true;
+    char status_msg[128] = "Polling...";
 
-    // Main loop. aptMainLoop returns false when the system asks the app to exit
-    // (e.g. user pressed HOME and chose Close). Always honor it.
+    if (!have_url) {
+        render_setup_screen(&top, &bottom);
+        while (aptMainLoop()) {
+            hidScanInput();
+            if (hidKeysDown() & KEY_START) break;
+            gspWaitForVBlank();
+        }
+        cog_http_exit();
+        gfxExit();
+        return 0;
+    }
+
     while (aptMainLoop()) {
         hidScanInput();
         u32 down = hidKeysDown();
-        u32 held = hidKeysHeld();
 
         if (down & KEY_START) break;
-        if (down & KEY_SELECT) frame = 0;
 
-        // Track latest touch for the bottom-screen status display
-        if (held & KEY_TOUCH) {
-            touchPosition touch;
-            hidTouchRead(&touch);
-            lastTouch = (touch.px << 16) | touch.py;
+        if (down & KEY_DUP)   { if (selected > 0) { selected--; dirty = true; } }
+        if (down & KEY_DDOWN) { if (selected < state.agent_count - 1) { selected++; dirty = true; } }
+
+        // Force re-poll on A
+        if (down & KEY_A) {
+            last_poll_frame = 0;
+            strncpy(status_msg, "Refreshing...", sizeof(status_msg));
         }
 
-        // Refresh bottom screen ~10 fps so the heartbeat number is visible
-        // without flickering.
-        if (frame % 6 == 0) {
-            consoleSelect(&bottomScreen);
-            printf("\x1b[1;1H");
-            printf("  \x1b[33m== STATUS ==\x1b[0m\n\n");
-            printf("  Heartbeat:    \x1b[32m%lu\x1b[0m       \n", frame);
-            printf("  Last touch:   \x1b[36m%lu, %lu\x1b[0m       \n",
-                   (lastTouch >> 16) & 0xFFFF, lastTouch & 0xFFFF);
-            printf("\n");
-            printf("  \x1b[37mTap the bottom screen.\x1b[0m\n");
-            printf("  \x1b[37mIf you see this counting,\x1b[0m\n");
-            printf("  \x1b[37mthe runtime is good.\x1b[0m\n");
+        // Y shows the configured URL (debug)
+        if (down & KEY_Y) {
+            consoleSelect(&top);
+            printf("\x1b[2J\x1b[1;1H");
+            printf("\n  \x1b[33mConfigured URL:\x1b[0m\n\n  %s\n\n", url);
+            printf("  \x1b[37mPress any button to return.\x1b[0m");
+            while (aptMainLoop()) {
+                hidScanInput();
+                u32 d = hidKeysDown();
+                if (d) break;
+                gspWaitForVBlank();
+            }
+            dirty = true;
         }
+
+        // Poll every 5 sec (60 fps × 5)
+        if (frame == 0 || frame - last_poll_frame >= 60 * 5) {
+            char state_url[COG_URL_MAX + 16];
+            build_state_url(url, state_url, sizeof(state_url));
+
+            char *body = NULL;
+            size_t body_len = 0;
+            int code = cog_http_get(state_url, &body, &body_len);
+
+            if (code == 200 && body) {
+                if (parse_state(body, &state)) {
+                    if (selected >= state.agent_count) selected = state.agent_count - 1;
+                    if (selected < 0) selected = 0;
+                    snprintf(status_msg, sizeof(status_msg), "OK (%zu bytes)", body_len);
+                } else {
+                    snprintf(status_msg, sizeof(status_msg), "JSON parse failed");
+                }
+            } else if (code > 0) {
+                snprintf(status_msg, sizeof(status_msg), "HTTP %d", code);
+            } else {
+                snprintf(status_msg, sizeof(status_msg), "Network error %d", code);
+            }
+            if (body) free(body);
+
+            last_poll_frame = frame;
+            dirty = true;
+        }
+
+        if (dirty) {
+            render_main_screens(&top, &bottom, &state, selected, url);
+            // Append status line at bottom of bottom screen
+            consoleSelect(&bottom);
+            printf("\n\n  \x1b[37mPoll: %s\x1b[0m\n", status_msg);
+            dirty = false;
+        }
+
         frame++;
-
-        // Push framebuffers to the LCD and wait for VSync (~60 fps cap).
         gfxFlushBuffers();
         gfxSwapBuffers();
         gspWaitForVBlank();
     }
 
+    cog_http_exit();
     gfxExit();
     return 0;
 }
