@@ -2,6 +2,7 @@
 #include "theme.h"
 #include <string.h>
 #include <math.h>
+#include <stdbool.h>
 
 void canvas_init(Canvas *cv) {
     memset(cv, 0, sizeof(*cv));
@@ -90,4 +91,30 @@ void canvas_frame_all(Canvas *cv) {
     cv->cam_zoom = zx < zy ? zx : zy;
     if (cv->cam_zoom < CANVAS_ZOOM_MIN) cv->cam_zoom = CANVAS_ZOOM_MIN;
     if (cv->cam_zoom > CANVAS_ZOOM_MAX) cv->cam_zoom = CANVAS_ZOOM_MAX;
+}
+
+int canvas_nav_nearest(const Canvas *cv, CanvasNavDir dir) {
+    if (cv->card_count == 0) return -1;
+    if (cv->selected_idx < 0) return 0;
+    const Card *from = &cv->cards[cv->selected_idx];
+    float fx = from->x + from->width / 2, fy = from->y + from->height / 2;
+    int best = -1;
+    float best_dist = 1e30f;
+    for (int i = 0; i < cv->card_count; i++) {
+        if (i == cv->selected_idx) continue;
+        const Card *c = &cv->cards[i];
+        float cx = c->x + c->width / 2, cy = c->y + c->height / 2;
+        float dx = cx - fx, dy = cy - fy;
+        bool in_dir = false;
+        switch (dir) {
+            case CANVAS_NAV_LEFT:  in_dir = dx < 0 && (-dx) > (dy > 0 ? dy : -dy); break;
+            case CANVAS_NAV_RIGHT: in_dir = dx > 0 && dx > (dy > 0 ? dy : -dy);    break;
+            case CANVAS_NAV_UP:    in_dir = dy < 0 && (-dy) > (dx > 0 ? dx : -dx); break;
+            case CANVAS_NAV_DOWN:  in_dir = dy > 0 && dy > (dx > 0 ? dx : -dx);    break;
+        }
+        if (!in_dir) continue;
+        float dist = dx * dx + dy * dy;
+        if (dist < best_dist) { best_dist = dist; best = i; }
+    }
+    return best;
 }

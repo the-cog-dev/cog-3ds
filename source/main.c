@@ -448,6 +448,21 @@ int main(void) {
         if (down & KEY_DUP)   { if (selected > 0) { selected--; dirty = true; } }
         if (down & KEY_DDOWN) { if (selected < state.agent_count - 1) { selected++; dirty = true; } }
 
+        CanvasNavDir nav = (CanvasNavDir)-1;
+        if (down & KEY_DUP)    nav = CANVAS_NAV_UP;
+        if (down & KEY_DDOWN)  nav = CANVAS_NAV_DOWN;
+        if (down & KEY_DLEFT)  nav = CANVAS_NAV_LEFT;
+        if (down & KEY_DRIGHT) nav = CANVAS_NAV_RIGHT;
+        if ((int)nav >= 0) {
+            int ni = canvas_nav_nearest(&canvas, nav);
+            if (ni >= 0) {
+                if (canvas.selected_idx >= 0 && canvas.selected_idx < canvas.card_count)
+                    canvas.cards[canvas.selected_idx].selected = false;
+                canvas.selected_idx = ni;
+                canvas.cards[ni].selected = true;
+            }
+        }
+
         // Force re-poll on A
         if (down & KEY_A) {
             last_poll_frame = 0;

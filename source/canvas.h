@@ -53,4 +53,11 @@ void canvas_draw(CogRender *r, const Canvas *cv);
 // /state poll populates cards.
 void canvas_frame_all(Canvas *cv);
 
+// Returns the index of the card nearest to the currently-selected
+// card in the given direction (-1 left, +1 right, -1/+1 for up/down on y).
+// Returns -1 if no card exists in that direction. If nothing selected,
+// returns index 0 (or -1 if empty).
+typedef enum { CANVAS_NAV_UP, CANVAS_NAV_DOWN, CANVAS_NAV_LEFT, CANVAS_NAV_RIGHT } CanvasNavDir;
+int canvas_nav_nearest(const Canvas *cv, CanvasNavDir dir);
+
 #endif
