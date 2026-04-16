@@ -29,16 +29,50 @@ bool cog_net_recv(CogRender *render, char *out_url, size_t out_size) {
 
     // SOC service needs a page-aligned buffer
     u32 *soc_buf = (u32 *)memalign(0x1000, SOC_BUFSIZE);
-    if (!soc_buf) return false;
+    if (!soc_buf) {
+        if (render) {
+            cog_render_frame_begin(render);
+            cog_render_target_top(render, THEME_BG_DARK);
+            cog_render_text(render, "memalign failed", 80, 100, THEME_FONT_HEADER, THEME_STATUS_DISCONNECTED);
+            cog_render_target_bottom(render, THEME_BG_CANVAS);
+            cog_render_frame_end(render);
+            for (int f = 0; f < 120; f++) gspWaitForVBlank();
+        }
+        return false;
+    }
 
     Result soc_rc = socInit(soc_buf, SOC_BUFSIZE);
-    if (R_FAILED(soc_rc)) { free(soc_buf); return false; }
+    if (R_FAILED(soc_rc)) {
+        if (render) {
+            char msg[64];
+            snprintf(msg, sizeof(msg), "socInit failed: %08lX", soc_rc);
+            cog_render_frame_begin(render);
+            cog_render_target_top(render, THEME_BG_DARK);
+            cog_render_text(render, msg, 40, 100, THEME_FONT_LABEL, THEME_STATUS_DISCONNECTED);
+            cog_render_text(render, "Is WiFi connected?", 40, 130, THEME_FONT_FOOTER, THEME_TEXT_DIMMED);
+            cog_render_target_bottom(render, THEME_BG_CANVAS);
+            cog_render_frame_end(render);
+            for (int f = 0; f < 120; f++) gspWaitForVBlank();
+        }
+        free(soc_buf);
+        return false;
+    }
 
     char local_ip[32] = "?.?.?.?";
     get_local_ip(local_ip, sizeof(local_ip));
 
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (server_fd < 0) { socExit(); free(soc_buf); return false; }
+    if (server_fd < 0) {
+        if (render) {
+            cog_render_frame_begin(render);
+            cog_render_target_top(render, THEME_BG_DARK);
+            cog_render_text(render, "socket() failed", 80, 100, THEME_FONT_HEADER, THEME_STATUS_DISCONNECTED);
+            cog_render_target_bottom(render, THEME_BG_CANVAS);
+            cog_render_frame_end(render);
+            for (int f = 0; f < 120; f++) gspWaitForVBlank();
+        }
+        socExit(); free(soc_buf); return false;
+    }
 
     int one = 1;
     setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
