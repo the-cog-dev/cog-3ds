@@ -1,0 +1,16 @@
+// Top-screen detail view — header bar + selected agent info.
+// Called once per frame after the render target switches to top.
+
+#ifndef COG_DETAIL_H
+#define COG_DETAIL_H
+
+#include "render.h"
+#include "canvas.h"
+
+// Draw header + footer + body. card_or_null is the selected card
+// or NULL for the empty state. project_name shows in the header.
+void detail_draw(CogRender *r, const char *project_name,
+                 const Card *card_or_null, int agent_count,
+                 int connection_count);
+
+#endif
