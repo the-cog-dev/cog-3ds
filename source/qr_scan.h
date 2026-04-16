@@ -15,10 +15,12 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+#include "render.h"
+
 // Run the QR scanner. Blocks until scan succeeds (returns true), user
 // cancels with B (returns false), or an unrecoverable error occurs
-// (returns false). The PrintConsole state on both screens is clobbered;
-// caller should redraw after this returns.
-bool cog_qr_scan(char *out_url, size_t out_size);
+// (returns false). Renders status frames via citro2d using the supplied
+// CogRender instance (already initialized by caller).
+bool cog_qr_scan(CogRender *render, char *out_url, size_t out_size);
 
 #endif

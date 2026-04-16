@@ -210,35 +210,21 @@ static void sync_canvas_from_state(Canvas *cv, const CogState *state) {
 
 // ── Rendering ────────────────────────────────────────────────────────────────
 
-static void render_setup_screen(PrintConsole *top, PrintConsole *bottom) {
-    consoleSelect(top);
-    printf("\x1b[2J\x1b[1;1H");
-    printf("\n");
-    printf("    \x1b[33m  ___  _____  ___\x1b[0m\n");
-    printf("    \x1b[33m / _ \\| ____|/ _ \\\x1b[0m       The Cog\n");
-    printf("    \x1b[33m| (_) | |    | (_) |\x1b[0m       v0.2 - first connection\n");
-    printf("    \x1b[33m \\___/|_|     \\___/\x1b[0m\n");
-    printf("\n");
-    printf("    \x1b[31mNo Remote View URL saved.\x1b[0m\n");
-    printf("\n");
-    printf("    To get connected:\n");
-    printf("    1. On your PC, open The Cog\n");
-    printf("    2. Settings -> Remote View -> Enable\n");
-    printf("    3. Toggle on \x1b[32mEnable LAN access\x1b[0m\n");
-    printf("    4. Copy the LAN URL (the http:// one)\n");
-    printf("    5. Save as: \x1b[36m/3ds/cog-3ds/config.txt\x1b[0m\n");
-    printf("       on your SD card\n");
-    printf("\n");
-    printf("    Or skip the file step entirely:\n");
-    printf("    \x1b[32mPress [X] to scan a QR code.\x1b[0m\n");
-    printf("\n");
-    printf("    \x1b[37m[X]\x1b[0m scan QR  \x1b[37m[START]\x1b[0m exit\n");
-
-    consoleSelect(bottom);
-    printf("\x1b[2J\x1b[1;1H");
-    printf("\n  \x1b[33mSetup needed\x1b[0m\n\n");
-    printf("  Once config.txt is on your\n");
-    printf("  SD card, relaunch this app.\n");
+static void render_setup_screen(CogRender *r) {
+    cog_render_frame_begin(r);
+    cog_render_target_top(r, THEME_BG_DARK);
+    cog_render_text(r, "The Cog", 150, 40, THEME_FONT_HEADER, THEME_GOLD);
+    cog_render_text(r, "No Remote View URL saved.",
+                    80, 90, THEME_FONT_LABEL, THEME_TEXT_PRIMARY);
+    cog_render_text(r, "Press X to scan a QR code.",
+                    80, 115, THEME_FONT_LABEL, THEME_TEXT_DIMMED);
+    cog_render_text(r, "Or save the URL to:", 80, 145, THEME_FONT_LABEL, THEME_TEXT_DIMMED);
+    cog_render_text(r, "sdmc:/3ds/cog-3ds/config.txt", 80, 165, THEME_FONT_FOOTER, THEME_GOLD_DIM);
+    cog_render_target_bottom(r, THEME_BG_CANVAS);
+    cog_render_text(r, "Setup needed", 80, 100, THEME_FONT_HEADER, THEME_GOLD);
+    cog_render_text(r, "[X] scan   [START] exit",
+                    80, 160, THEME_FONT_LABEL, THEME_TEXT_DIMMED);
+    cog_render_frame_end(r);
 }
 
 static void render_main_screens(PrintConsole *top, PrintConsole *bottom,
@@ -308,13 +294,29 @@ int main(void) {
 
     Result http_rc = cog_http_init();
     if (R_FAILED(http_rc)) {
-        consoleSelect(&top);
-        printf("\n  \x1b[31mFailed to init httpc: %ld\x1b[0m\n", http_rc);
-        printf("  Press START to exit.\n");
-        while (aptMainLoop()) {
-            hidScanInput();
-            if (hidKeysDown() & KEY_START) break;
-            gspWaitForVBlank();
+        if (use_citro2d) {
+            while (aptMainLoop()) {
+                hidScanInput();
+                if (hidKeysDown() & KEY_START) break;
+                char msg[64];
+                snprintf(msg, sizeof(msg), "httpc init failed: %ld", http_rc);
+                cog_render_frame_begin(&render);
+                cog_render_target_top(&render, THEME_BG_DARK);
+                cog_render_text(&render, msg, 40, 100, THEME_FONT_LABEL, THEME_STATUS_DISCONNECTED);
+                cog_render_text(&render, "Press START to exit.", 40, 130, THEME_FONT_FOOTER, THEME_TEXT_DIMMED);
+                cog_render_target_bottom(&render, THEME_BG_CANVAS);
+                cog_render_frame_end(&render);
+            }
+            cog_render_exit(&render);
+        } else {
+            consoleSelect(&top);
+            printf("\n  \x1b[31mFailed to init httpc: %ld\x1b[0m\n", http_rc);
+            printf("  Press START to exit.\n");
+            while (aptMainLoop()) {
+                hidScanInput();
+                if (hidKeysDown() & KEY_START) break;
+                gspWaitForVBlank();
+            }
         }
         gfxExit();
         return 1;
@@ -342,29 +344,47 @@ int main(void) {
     // Setup screen loop: waits for START (exit) or X (QR scan). If the
     // scan succeeds we save the URL and fall through to the main UI.
     while (!have_url && aptMainLoop()) {
-        render_setup_screen(&top, &bottom);
         bool exit_requested = false;
+        bool scan_requested = false;
         while (aptMainLoop()) {
             hidScanInput();
             u32 sd = hidKeysDown();
             if (sd & KEY_START) { exit_requested = true; break; }
-            if (sd & KEY_X) {
-                char scanned[COG_URL_MAX] = {0};
-                if (cog_qr_scan(scanned, sizeof(scanned))) {
-                    if (cog_config_save(scanned)) {
-                        strncpy(url, scanned, sizeof(url) - 1);
-                        url[sizeof(url) - 1] = '\0';
-                        have_url = true;
-                    }
+            if (sd & KEY_X) { scan_requested = true; break; }
+            if (use_citro2d) {
+                render_setup_screen(&render);
+            } else {
+                // Legacy PrintConsole path — render once, then just idle.
+                static bool drawn = false;
+                if (!drawn) {
+                    consoleSelect(&top);
+                    printf("\x1b[2J\x1b[1;1H");
+                    printf("\n  \x1b[31mNo Remote View URL saved.\x1b[0m\n\n");
+                    printf("  \x1b[32mPress [X] to scan a QR code.\x1b[0m\n");
+                    printf("  \x1b[37m[START]\x1b[0m exit\n");
+                    consoleSelect(&bottom);
+                    printf("\x1b[2J\x1b[1;1H");
+                    printf("\n  \x1b[33mSetup needed\x1b[0m\n");
+                    drawn = true;
                 }
-                break;  // re-render setup (if still no URL) or fall through
+                gspWaitForVBlank();
             }
-            gspWaitForVBlank();
         }
         if (exit_requested) {
+            if (use_citro2d) cog_render_exit(&render);
             cog_http_exit();
             gfxExit();
             return 0;
+        }
+        if (scan_requested) {
+            char scanned[COG_URL_MAX] = {0};
+            if (cog_qr_scan(&render, scanned, sizeof(scanned))) {
+                if (cog_config_save(scanned)) {
+                    strncpy(url, scanned, sizeof(url) - 1);
+                    url[sizeof(url) - 1] = '\0';
+                    have_url = true;
+                }
+            }
         }
     }
 
@@ -480,15 +500,29 @@ int main(void) {
 
         // Y shows the configured URL (debug)
         if (down & KEY_Y) {
-            consoleSelect(&top);
-            printf("\x1b[2J\x1b[1;1H");
-            printf("\n  \x1b[33mConfigured URL:\x1b[0m\n\n  %s\n\n", url);
-            printf("  \x1b[37mPress any button to return.\x1b[0m");
-            while (aptMainLoop()) {
-                hidScanInput();
-                u32 d = hidKeysDown();
-                if (d) break;
-                gspWaitForVBlank();
+            if (use_citro2d) {
+                while (aptMainLoop()) {
+                    hidScanInput();
+                    if (hidKeysDown()) break;
+                    cog_render_frame_begin(&render);
+                    cog_render_target_top(&render, THEME_BG_DARK);
+                    cog_render_text(&render, "Configured URL:", 12, 30, THEME_FONT_HEADER, THEME_GOLD);
+                    cog_render_text(&render, url, 12, 70, THEME_FONT_FOOTER, THEME_TEXT_PRIMARY);
+                    cog_render_text(&render, "Press any button to return.", 12, 200, THEME_FONT_FOOTER, THEME_TEXT_DIMMED);
+                    cog_render_target_bottom(&render, THEME_BG_CANVAS);
+                    cog_render_frame_end(&render);
+                }
+            } else {
+                consoleSelect(&top);
+                printf("\x1b[2J\x1b[1;1H");
+                printf("\n  \x1b[33mConfigured URL:\x1b[0m\n\n  %s\n\n", url);
+                printf("  \x1b[37mPress any button to return.\x1b[0m");
+                while (aptMainLoop()) {
+                    hidScanInput();
+                    u32 d = hidKeysDown();
+                    if (d) break;
+                    gspWaitForVBlank();
+                }
             }
             dirty = true;
         }
@@ -496,7 +530,7 @@ int main(void) {
         // X rescans a QR code to update the saved URL
         if (down & KEY_X) {
             char scanned[COG_URL_MAX] = {0};
-            if (cog_qr_scan(scanned, sizeof(scanned))) {
+            if (cog_qr_scan(&render, scanned, sizeof(scanned))) {
                 if (cog_config_save(scanned)) {
                     strncpy(url, scanned, sizeof(url) - 1);
                     url[sizeof(url) - 1] = '\0';

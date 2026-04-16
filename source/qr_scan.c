@@ -1,7 +1,9 @@
 #include "qr_scan.h"
 #include "quirc/quirc.h"
+#include "theme.h"
 
 #include <3ds.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -54,45 +56,42 @@ static bool payload_is_valid_url(const uint8_t *payload, int len) {
     return true;
 }
 
-// Status message on the bottom (PrintConsole) screen. Repaints the whole
-// bottom; caller has already consoleSelect'd it.
-static void draw_bottom(const char *status, int scan_count) {
-    printf("\x1b[2J\x1b[1;1H");
-    printf("\n  \x1b[33mQR Scanner\x1b[0m\n\n");
-    printf("  \x1b[37mPoint the outer camera\n");
-    printf("  at the QR code on your PC.\n\n");
-    printf("  Status: %s\n", status);
-    printf("  Frames: %d\n\n", scan_count);
-    printf("  \x1b[37m[B]\x1b[0m cancel\n");
+// Draw one full scanner status frame (top + bottom) via citro2d. Called
+// once per loop iteration — citro2d needs a full frame submission every
+// tick or the screen stays stale.
+static void draw_status_frame(CogRender *r, const char *top_big,
+                              const char *bot_status, int scan_count) {
+    u64 now = osGetTime();
+    float pulse = 0.5f + 0.5f * sinf((now % 1000) / 1000.0f * 6.28318f);
+    u32 pulse_color = C2D_Color32f(1.0f, 0.84f * pulse, 0.43f * pulse, 1.0f);
+
+    cog_render_frame_begin(r);
+
+    // Top: big scan label
+    cog_render_target_top(r, THEME_BG_DARK);
+    cog_render_text(r, top_big, 80, 80, THEME_FONT_HEADER, pulse_color);
+    cog_render_text(r, "Point outer camera at the QR.",
+                    60, 120, THEME_FONT_LABEL, THEME_TEXT_DIMMED);
+    cog_render_text(r, "Hold steady ~15 cm away.",
+                    60, 145, THEME_FONT_LABEL, THEME_TEXT_DIMMED);
+
+    // Bottom: status
+    cog_render_target_bottom(r, THEME_BG_CANVAS);
+    cog_render_text(r, "QR Scanner", 12, 12, THEME_FONT_HEADER, THEME_GOLD);
+    cog_render_text(r, bot_status, 12, 60, THEME_FONT_LABEL, THEME_TEXT_PRIMARY);
+    char buf[32];
+    snprintf(buf, sizeof(buf), "Frames: %d", scan_count);
+    cog_render_text(r, buf, 12, 90, THEME_FONT_LABEL, THEME_TEXT_DIMMED);
+    cog_render_text(r, "[B] cancel", 12, 210, THEME_FONT_FOOTER, THEME_TEXT_DIMMED);
+
+    cog_render_frame_end(r);
 }
 
-// Big "SCANNING" text on top for blind-aim feedback.
-static void draw_top(const char *big) {
-    printf("\x1b[2J\x1b[1;1H");
-    printf("\n\n\n");
-    printf("    \x1b[33m%s\x1b[0m\n\n", big);
-    printf("    Point outer camera at the\n");
-    printf("    QR code shown in Cog's\n");
-    printf("    Settings -> Remote View.\n\n");
-    printf("    Hold steady ~15 cm away.\n");
-}
-
-bool cog_qr_scan(char *out_url, size_t out_size) {
+bool cog_qr_scan(CogRender *render, char *out_url, size_t out_size) {
     if (!out_url || out_size == 0) return false;
     out_url[0] = '\0';
 
-    PrintConsole *top = consoleGetDefault();  // save whatever was active
-    (void)top;
-
-    // Get console handles — both already initialized by main().
-    PrintConsole top_c, bot_c;
-    consoleInit(GFX_TOP, &top_c);
-    consoleInit(GFX_BOTTOM, &bot_c);
-
-    consoleSelect(&top_c);
-    draw_top("SCANNING...");
-    consoleSelect(&bot_c);
-    draw_bottom("initializing camera", 0);
+    draw_status_frame(render, "SCANNING...", "initializing camera", 0);
 
     bool success = false;
     uint8_t *frame = NULL;
@@ -101,8 +100,7 @@ bool cog_qr_scan(char *out_url, size_t out_size) {
     // ── Init camera ──────────────────────────────────────────────────────
     Result rc = camInit();
     if (R_FAILED(rc)) {
-        consoleSelect(&bot_c);
-        draw_bottom("camInit failed", 0);
+        draw_status_frame(render, "SCANNING...", "camInit failed", 0);
         goto cleanup;
     }
 
@@ -123,8 +121,7 @@ bool cog_qr_scan(char *out_url, size_t out_size) {
 
     frame = (uint8_t *)linearAlloc(CAM_BYTES);
     if (!frame) {
-        consoleSelect(&bot_c);
-        draw_bottom("frame alloc failed", 0);
+        draw_status_frame(render, "SCANNING...", "frame alloc failed", 0);
         goto cleanup;
     }
 
@@ -135,17 +132,15 @@ bool cog_qr_scan(char *out_url, size_t out_size) {
     // ── Init quirc ───────────────────────────────────────────────────────
     q = quirc_new();
     if (!q || quirc_resize(q, Q_WIDTH, Q_HEIGHT) < 0) {
-        consoleSelect(&bot_c);
-        draw_bottom("quirc init failed", 0);
+        draw_status_frame(render, "SCANNING...", "quirc init failed", 0);
         goto cleanup;
     }
 
-    consoleSelect(&bot_c);
-    draw_bottom("scanning...", 0);
+    draw_status_frame(render, "SCANNING...", "scanning...", 0);
 
     // ── Capture + decode loop ────────────────────────────────────────────
     int scan_count = 0;
-    const char *last_error = "";
+    char last_error[64] = "";
 
     while (aptMainLoop()) {
         hidScanInput();
@@ -158,9 +153,9 @@ bool cog_qr_scan(char *out_url, size_t out_size) {
         Result wait_rc = svcWaitSynchronization(receive_event, 300000000LL); // 300ms
         if (receive_event) { svcCloseHandle(receive_event); receive_event = 0; }
         if (R_FAILED(wait_rc)) {
-            last_error = "capture timeout";
-            consoleSelect(&bot_c);
-            draw_bottom(last_error, scan_count);
+            strncpy(last_error, "capture timeout", sizeof(last_error) - 1);
+            last_error[sizeof(last_error) - 1] = '\0';
+            draw_status_frame(render, "SCANNING...", last_error, scan_count);
             continue;
         }
 
@@ -186,29 +181,24 @@ bool cog_qr_scan(char *out_url, size_t out_size) {
                         memcpy(out_url, data.payload, copy_len);
                         out_url[copy_len] = '\0';
                         success = true;
-                        consoleSelect(&top_c);
-                        draw_top("GOT IT!");
-                        consoleSelect(&bot_c);
-                        draw_bottom("decoded URL", scan_count);
+                        draw_status_frame(render, "GOT IT!", "decoded URL", scan_count);
                         // short pause so user sees confirmation
                         for (int f = 0; f < 45; f++) gspWaitForVBlank();
                         goto cleanup;
                     } else {
-                        last_error = "QR found but not a URL";
+                        strncpy(last_error, "QR found but not a URL", sizeof(last_error) - 1);
+                        last_error[sizeof(last_error) - 1] = '\0';
                     }
                 } else if (err != QUIRC_ERROR_DATA_ECC && err != QUIRC_ERROR_FORMAT_ECC) {
-                    last_error = quirc_strerror(err);
+                    strncpy(last_error, quirc_strerror(err), sizeof(last_error) - 1);
+                    last_error[sizeof(last_error) - 1] = '\0';
                 }
             }
         }
 
-        // Update status every ~5 frames to avoid console flicker.
-        if (scan_count % 5 == 0) {
-            consoleSelect(&bot_c);
-            draw_bottom(last_error[0] ? last_error : "scanning...", scan_count);
-        }
-
-        gspWaitForVBlank();
+        draw_status_frame(render, "SCANNING...",
+                          last_error[0] ? last_error : "scanning...",
+                          scan_count);
     }
 
 cleanup:
