@@ -300,6 +300,24 @@ static void render_main_screens(PrintConsole *top, PrintConsole *bottom,
     }
 }
 
+// ── Background poller ────────────────────────────────────────────────────────
+// Runs the blocking HTTP GET in a separate thread so the render loop
+// stays responsive even when the server is unreachable.
+
+static char          poll_url[COG_URL_MAX + 16];
+static char         *poll_body = NULL;
+static size_t        poll_body_len = 0;
+static volatile int  poll_code = 0;
+static volatile bool poll_done = false;
+static volatile bool poll_active = false;
+static Thread        poll_thread = NULL;
+
+static void poll_thread_func(void *arg) {
+    (void)arg;
+    poll_code = cog_http_get(poll_url, &poll_body, &poll_body_len);
+    poll_done = true;
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 int main(void) {
@@ -587,32 +605,45 @@ setup:
             dirty = true;
         }
 
-        // Poll every 5 sec (60 fps × 5). Skip frame 0 so the first
-        // render fires before any blocking HTTP call — prevents the
-        // black-screen hang if the server is unreachable.
-        if (frame > 0 && (frame == 1 || frame - last_poll_frame >= 60 * 5)) {
-            char state_url[COG_URL_MAX + 16];
-            build_state_url(url, state_url, sizeof(state_url));
+        // Poll every 5 sec. Runs in a background thread so the main
+        // loop never blocks on network — UI stays responsive even when
+        // the server is unreachable.
+        if (!poll_active && frame > 0 &&
+            (frame == 1 || frame - last_poll_frame >= 60 * 5)) {
+            build_state_url(url, poll_url, sizeof(poll_url));
+            poll_body = NULL;
+            poll_body_len = 0;
+            poll_code = 0;
+            poll_done = false;
+            poll_active = true;
+            poll_thread = threadCreate(poll_thread_func, NULL,
+                                       4096, 0x30, -1, false);
+            if (!poll_thread) {
+                poll_active = false;
+                snprintf(status_msg, sizeof(status_msg), "Thread error");
+            }
+        }
+        if (poll_active && poll_done) {
+            threadJoin(poll_thread, U64_MAX);
+            threadFree(poll_thread);
+            poll_thread = NULL;
+            poll_active = false;
 
-            char *body = NULL;
-            size_t body_len = 0;
-            int code = cog_http_get(state_url, &body, &body_len);
-
-            if (code == 200 && body) {
-                if (parse_state(body, &state)) {
+            if (poll_code == 200 && poll_body) {
+                if (parse_state(poll_body, &state)) {
                     sync_canvas_from_state(&canvas, &state);
                     if (selected >= state.agent_count) selected = state.agent_count - 1;
                     if (selected < 0) selected = 0;
-                    snprintf(status_msg, sizeof(status_msg), "OK (%zu bytes)", body_len);
+                    snprintf(status_msg, sizeof(status_msg), "OK (%zu bytes)", poll_body_len);
                 } else {
                     snprintf(status_msg, sizeof(status_msg), "JSON parse failed");
                 }
-            } else if (code > 0) {
-                snprintf(status_msg, sizeof(status_msg), "HTTP %d", code);
+            } else if (poll_code > 0) {
+                snprintf(status_msg, sizeof(status_msg), "HTTP %d", poll_code);
             } else {
-                snprintf(status_msg, sizeof(status_msg), "Network error %d", code);
+                snprintf(status_msg, sizeof(status_msg), "Offline (err %d)", poll_code);
             }
-            if (body) free(body);
+            if (poll_body) { free(poll_body); poll_body = NULL; }
 
             last_poll_frame = frame;
             dirty = true;
