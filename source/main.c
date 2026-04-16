@@ -24,6 +24,9 @@
 
 #include "render.h"
 #include "theme.h"
+#include "canvas.h"
+#include "card.h"
+#include "detail.h"
 
 #include "cJSON.h"
 #include "http.h"
@@ -39,6 +42,9 @@ typedef struct {
     char model[32];
     char role[24];
     char status[16];   // "working", "active", "idle", "disconnected"
+    float x, y;
+    float width, height;
+    u32 color_rgba;   // citro2d native
 } AgentInfo;
 
 typedef struct {
@@ -56,6 +62,9 @@ static const char *STATUS_COLOR_CODE(const char *status) {
     if (strcmp(status, "disconnected") == 0) return "\x1b[31m";  // red
     return "\x1b[37m";
 }
+
+// Forward declaration — defined below after build_state_url.
+static u32 parse_hex_color(const char *hex);
 
 // Pull a JSON string field, copy into dest with bounded length.
 static void json_get_string(cJSON *parent, const char *field, char *dest, size_t dest_size) {
@@ -94,6 +103,16 @@ static bool parse_state(const char *json_text, CogState *out) {
             json_get_string(agent, "model", a->model, sizeof(a->model));
             json_get_string(agent, "role", a->role, sizeof(a->role));
             json_get_string(agent, "status", a->status, sizeof(a->status));
+            cJSON *x = cJSON_GetObjectItemCaseSensitive(agent, "x");
+            cJSON *y = cJSON_GetObjectItemCaseSensitive(agent, "y");
+            cJSON *w = cJSON_GetObjectItemCaseSensitive(agent, "width");
+            cJSON *h = cJSON_GetObjectItemCaseSensitive(agent, "height");
+            cJSON *col = cJSON_GetObjectItemCaseSensitive(agent, "color");
+            a->x = cJSON_IsNumber(x) ? (float)x->valuedouble : 0.0f;
+            a->y = cJSON_IsNumber(y) ? (float)y->valuedouble : 0.0f;
+            a->width = cJSON_IsNumber(w) ? (float)w->valuedouble : 0.0f;
+            a->height = cJSON_IsNumber(h) ? (float)h->valuedouble : 0.0f;
+            a->color_rgba = parse_hex_color(cJSON_IsString(col) ? col->valuestring : NULL);
             out->agent_count++;
         }
     }
@@ -106,6 +125,61 @@ static bool parse_state(const char *json_text, CogState *out) {
 // expected to end with /r/<token>/ — so we just concatenate.
 static void build_state_url(const char *base_url, char *out, size_t out_size) {
     snprintf(out, out_size, "%sstate", base_url);
+}
+
+// Parse a hex color string "#RRGGBB" into citro2d's 0xAABBGGRR layout.
+// Returns a grey fallback for invalid input.
+static u32 parse_hex_color(const char *hex) {
+    if (!hex || hex[0] != '#' || !hex[1]) return 0xff888888;
+    unsigned int r = 0, g = 0, b = 0;
+    if (sscanf(hex + 1, "%2x%2x%2x", &r, &g, &b) != 3) return 0xff888888;
+    return 0xff000000 | (b << 16) | (g << 8) | r;
+}
+
+// Sync the canvas's cards from the freshly-polled CogState. Preserves
+// selection/lift for any card whose id is still present.
+static void sync_canvas_from_state(Canvas *cv, const CogState *state) {
+    // Stash currently-selected/lifted ids so we can restore
+    char prev_selected[64] = "";
+    char prev_lifted[64] = "";
+    if (cv->selected_idx >= 0 && cv->selected_idx < cv->card_count)
+        strncpy(prev_selected, cv->cards[cv->selected_idx].id, sizeof(prev_selected) - 1);
+    if (cv->lifted_idx >= 0 && cv->lifted_idx < cv->card_count)
+        strncpy(prev_lifted, cv->cards[cv->lifted_idx].id, sizeof(prev_lifted) - 1);
+
+    cv->card_count = state->agent_count < CANVAS_MAX_CARDS ? state->agent_count : CANVAS_MAX_CARDS;
+    cv->selected_idx = -1;
+    cv->lifted_idx = -1;
+
+    for (int i = 0; i < cv->card_count; i++) {
+        Card *c = &cv->cards[i];
+        const AgentInfo *a = &state->agents[i];
+        strncpy(c->id, a->id, sizeof(c->id) - 1); c->id[sizeof(c->id) - 1] = '\0';
+        strncpy(c->name, a->name, sizeof(c->name) - 1); c->name[sizeof(c->name) - 1] = '\0';
+        strncpy(c->cli, a->cli, sizeof(c->cli) - 1); c->cli[sizeof(c->cli) - 1] = '\0';
+        strncpy(c->model, a->model, sizeof(c->model) - 1); c->model[sizeof(c->model) - 1] = '\0';
+        strncpy(c->role, a->role, sizeof(c->role) - 1); c->role[sizeof(c->role) - 1] = '\0';
+        strncpy(c->status, a->status, sizeof(c->status) - 1); c->status[sizeof(c->status) - 1] = '\0';
+
+        c->x = a->x; c->y = a->y;
+        c->width = a->width > 0 ? a->width : CARD_DEFAULT_WIDTH;
+        c->height = a->height > 0 ? a->height : CARD_DEFAULT_HEIGHT;
+        c->color = a->color_rgba;
+        c->lift_scale = 1.0f;
+        c->enter_alpha = 1.0f;
+        c->selected = false;
+        c->lifted = false;
+
+        if (prev_selected[0] && strcmp(prev_selected, c->id) == 0) {
+            cv->selected_idx = i;
+            c->selected = true;
+        }
+        if (prev_lifted[0] && strcmp(prev_lifted, c->id) == 0) {
+            cv->lifted_idx = i;
+            c->lifted = true;
+            c->lift_scale = 1.2f;
+        }
+    }
 }
 
 // ── Rendering ────────────────────────────────────────────────────────────────
@@ -224,6 +298,8 @@ int main(void) {
     bool have_url = cog_config_load(url, sizeof(url));
 
     CogState state = {0};
+    Canvas canvas;
+    canvas_init(&canvas);
     int selected = 0;
     u32 last_poll_frame = 0;
     u32 frame = 0;
@@ -274,6 +350,9 @@ int main(void) {
             strncpy(status_msg, "Refreshing...", sizeof(status_msg));
         }
 
+        if (down & KEY_L) canvas_zoom(&canvas, -CANVAS_ZOOM_STEP);
+        if (down & KEY_R) canvas_zoom(&canvas, +CANVAS_ZOOM_STEP);
+
         // Y shows the configured URL (debug)
         if (down & KEY_Y) {
             consoleSelect(&top);
@@ -317,6 +396,7 @@ int main(void) {
 
             if (code == 200 && body) {
                 if (parse_state(body, &state)) {
+                    sync_canvas_from_state(&canvas, &state);
                     if (selected >= state.agent_count) selected = state.agent_count - 1;
                     if (selected < 0) selected = 0;
                     snprintf(status_msg, sizeof(status_msg), "OK (%zu bytes)", body_len);
@@ -335,11 +415,21 @@ int main(void) {
         }
 
         if (use_citro2d) {
+            // On the first successful state with cards, frame them.
+            static bool framed = false;
+            if (!framed && canvas.card_count > 0) {
+                canvas_frame_all(&canvas);
+                framed = true;
+            }
+
+            const Card *selected = (canvas.selected_idx >= 0) ? &canvas.cards[canvas.selected_idx] : NULL;
+
             cog_render_frame_begin(&render);
             cog_render_target_top(&render, THEME_BG_DARK);
-            cog_render_text(&render, "The Cog", 10, 10, THEME_FONT_HEADER, THEME_GOLD);
+            detail_draw(&render, state.project_name, selected,
+                        state.agent_count, state.connection_count);
             cog_render_target_bottom(&render, THEME_BG_CANVAS);
-            cog_render_text(&render, "canvas", 10, 10, THEME_FONT_FOOTER, THEME_TEXT_DIMMED);
+            canvas_draw(&render, &canvas);
             cog_render_frame_end(&render);
             dirty = false;
         } else if (dirty) {
