@@ -410,6 +410,14 @@ setup:
                 setup_start = osGetTime();
             }
             if (sd & KEY_Y) {
+                // Flush citro2d GPU state before the system keyboard
+                // applet takes over the screen, otherwise returning
+                // from the applet leaves VRAM in a bad state → crash.
+                if (use_citro2d) {
+                    C3D_FrameEnd(0);
+                    gspWaitForVBlank();
+                }
+
                 SwkbdState swkbd;
                 char typed[COG_URL_MAX] = {0};
                 swkbdInit(&swkbd, SWKBD_TYPE_NORMAL, 2, COG_URL_MAX - 1);
@@ -417,6 +425,13 @@ setup:
                 swkbdSetInitialText(&swkbd, have_url ? url : "http://");
                 swkbdSetFeatures(&swkbd, SWKBD_DEFAULT_QWERTY);
                 SwkbdButton btn = swkbdInputText(&swkbd, typed, sizeof(typed));
+
+                // Re-establish citro2d after the applet returns
+                if (use_citro2d) {
+                    C2D_Prepare();
+                    gspWaitForVBlank();
+                }
+
                 if (btn == SWKBD_BUTTON_RIGHT && typed[0]) {
                     if (cog_config_save(typed)) {
                         strncpy(url, typed, sizeof(url) - 1);
