@@ -12,7 +12,7 @@
 #include <unistd.h>
 
 #define RECV_PORT 8336
-#define SOC_BUFSIZE 0x1000
+#define SOC_BUFSIZE 0x100000  // 1MB — standard for 3DS SOC service
 
 // Get the 3DS's local IP address as a string.
 static bool get_local_ip(char *out, size_t out_size) {
