@@ -168,7 +168,7 @@ static void render_main_screens(PrintConsole *top, PrintConsole *bottom,
     }
 
     printf("\n");
-    printf("  \x1b[37m[A] refresh   [Y] url   [START] exit\x1b[0m\n");
+    printf("  \x1b[37m[A] refresh  [Y] url  [X] rescan QR  [START] exit\x1b[0m\n");
 
     // ── Bottom: agent list ───────────────────────────────────────────────────
     consoleSelect(bottom);
@@ -277,6 +277,23 @@ int main(void) {
                 u32 d = hidKeysDown();
                 if (d) break;
                 gspWaitForVBlank();
+            }
+            dirty = true;
+        }
+
+        // X rescans a QR code to update the saved URL
+        if (down & KEY_X) {
+            char scanned[COG_URL_MAX] = {0};
+            if (cog_qr_scan(scanned, sizeof(scanned))) {
+                if (cog_config_save(scanned)) {
+                    strncpy(url, scanned, sizeof(url) - 1);
+                    url[sizeof(url) - 1] = '\0';
+                    // Force immediate re-poll with new URL
+                    last_poll_frame = 0;
+                    state.agent_count = 0;
+                    selected = 0;
+                    strncpy(status_msg, "URL updated, refreshing...", sizeof(status_msg));
+                }
             }
             dirty = true;
         }

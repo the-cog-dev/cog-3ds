@@ -14,7 +14,7 @@ Option:
   FreeProductCode         : true
   MediaFootPadding        : false
   EnableCrypt             : false
-  EnableCompress          : true
+  EnableCompress          : false
 
 AccessControlInfo:
   CoreVersion                   : 2
@@ -22,7 +22,6 @@ AccessControlInfo:
   ReleaseKernelMajor            : "02"
   ReleaseKernelMinor            : "33"
   MemoryType                    : Application
-  SystemMode                    : 64MB
   IdealProcessor                : 0
   AffinityMask                  : 1
   Priority                      : 16
@@ -37,22 +36,12 @@ AccessControlInfo:
   CanShareDeviceMemory          : true
   RunnableOnSleep               : true
   SpecialMemoryArrange          : true
+  SystemMode                    : 64MB
   CpuSpeed                      : 268MHz
   EnableL2Cache                 : false
   CanAccessCore2                : true
   SystemModeExt                 : Legacy
   ResourceLimitCategory         : Application
-
-  MemoryMapping:
-   - 1ff00000-1ff7ffff:r
-   - 1ff80000-1fffffff
-
-  IORegisterMapping:
-   - 1ec00000-1efffffff
-
-  FileSystemAccess:
-   - DirectSdmc
-   - DirectSdmcWrite
 
   SystemCallAccess:
     ArbitrateAddress: 34
@@ -128,6 +117,13 @@ AccessControlInfo:
    - soc:U
    - ssl:C
    - y2r:u
+   - cam:u
+   - mic:u
+   - CAMU
+   - MIC:u
+
+  FileSystemAccess:
+   - DirectSdmc
 
 SystemControlInfo:
   SaveDataSize: 0K
@@ -136,12 +132,16 @@ SystemControlInfo:
   Dependency:
     ac: 0x0004013000002402L
     am: 0x0004013000001502L
+    camera: 0x0004013000001602L
     cfg: 0x0004013000001702L
+    codec: 0x0004013000001802L
     dsp: 0x0004013000001a02L
     gsp: 0x0004013000001c02L
     hid: 0x0004013000001d02L
     http: 0x0004013000002902L
+    mic: 0x0004013000002002L
     ndm: 0x0004013000002b02L
+    nim: 0x0004013000002c02L
     nwm: 0x0004013000002d02L
     pdn: 0x0004013000002102L
     ps: 0x0004013000003102L
