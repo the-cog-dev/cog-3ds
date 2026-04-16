@@ -410,17 +410,21 @@ setup:
                 setup_start = osGetTime();
             }
             if (sd & KEY_Y) {
-                // The system keyboard applet takes over the GPU and
-                // invalidates all VRAM state. Full citro2d teardown
-                // before + reinit after is the only safe approach.
-                if (use_citro2d) cog_render_exit(&render);
+                // SwkbdState is large — static to avoid stack overflow
+                // (Canvas + CogState already use ~16KB of the 32KB stack).
+                // citro2d teardown: the applet invalidates all VRAM.
+                static SwkbdState swkbd;
+                static char typed[COG_URL_MAX];
+                memset(typed, 0, sizeof(typed));
 
-                SwkbdState swkbd;
-                char typed[COG_URL_MAX] = {0};
+                if (use_citro2d) {
+                    gspWaitForVBlank();
+                    cog_render_exit(&render);
+                }
+
                 swkbdInit(&swkbd, SWKBD_TYPE_NORMAL, 2, COG_URL_MAX - 1);
-                swkbdSetHintText(&swkbd, "http://192.168.x.x:port/r/token/");
+                swkbdSetHintText(&swkbd, "Paste URL here");
                 swkbdSetInitialText(&swkbd, have_url ? url : "http://");
-                swkbdSetFeatures(&swkbd, SWKBD_DEFAULT_QWERTY);
                 SwkbdButton btn = swkbdInputText(&swkbd, typed, sizeof(typed));
 
                 if (use_citro2d) use_citro2d = cog_render_init(&render);
