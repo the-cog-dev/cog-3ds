@@ -1,0 +1,150 @@
+BasicInfo:
+  Title                   : "The Cog"
+  CompanyCode             : "00"
+  ProductCode             : "CTR-P-COGX"
+  ContentType             : Application
+  Logo                    : Homebrew
+
+TitleInfo:
+  Category                : Application
+  UniqueId                : 0xC06A1
+
+Option:
+  UseOnSD                 : true
+  FreeProductCode         : true
+  MediaFootPadding        : false
+  EnableCrypt             : false
+  EnableCompress          : true
+
+AccessControlInfo:
+  CoreVersion                   : 2
+  DescVersion                   : 2
+  ReleaseKernelMajor            : "02"
+  ReleaseKernelMinor            : "33"
+  MemoryType                    : Application
+  SystemMode                    : 64MB
+  IdealProcessor                : 0
+  AffinityMask                  : 1
+  Priority                      : 16
+  MaxCpu                        : 0x9E
+  HandleTableSize               : 0x200
+  DisableDebug                  : true
+  EnableForceDebug              : false
+  CanWriteSharedPage            : true
+  CanUsePrivilegedPriority      : false
+  CanUseNonAlphabetAndNumber    : true
+  PermitMainFunctionArgument    : true
+  CanShareDeviceMemory          : true
+  RunnableOnSleep               : true
+  SpecialMemoryArrange          : true
+  CpuSpeed                      : 268MHz
+  EnableL2Cache                 : false
+  CanAccessCore2                : true
+  SystemModeExt                 : Legacy
+  ResourceLimitCategory         : Application
+
+  MemoryMapping:
+   - 1ff00000-1ff7ffff:r
+   - 1ff80000-1fffffff
+
+  IORegisterMapping:
+   - 1ec00000-1efffffff
+
+  FileSystemAccess:
+   - DirectSdmc
+   - DirectSdmcWrite
+
+  SystemCallAccess:
+    ArbitrateAddress: 34
+    Break: 60
+    CancelTimer: 28
+    ClearEvent: 25
+    ClearTimer: 29
+    CloseHandle: 35
+    ConnectToPort: 45
+    ControlMemory: 1
+    CreateAddressArbiter: 33
+    CreateEvent: 23
+    CreateMemoryBlock: 30
+    CreateMutex: 19
+    CreateSemaphore: 21
+    CreateThread: 8
+    CreateTimer: 26
+    DuplicateHandle: 39
+    ExitProcess: 3
+    ExitThread: 9
+    GetCurrentProcessorNumber: 17
+    GetHandleInfo: 41
+    GetProcessId: 53
+    GetProcessIdOfThread: 54
+    GetProcessIdealProcessor: 5
+    GetProcessInfo: 42
+    GetResourceLimit: 55
+    GetResourceLimitCurrentValues: 57
+    GetResourceLimitLimitValues: 56
+    GetSystemInfo: 43
+    GetSystemTick: 40
+    GetThreadContext: 59
+    GetThreadId: 55
+    GetThreadIdealProcessor: 15
+    GetThreadInfo: 44
+    GetThreadPriority: 11
+    MapMemoryBlock: 31
+    OutputDebugString: 61
+    QueryMemory: 2
+    ReleaseMutex: 20
+    ReleaseSemaphore: 22
+    SendSyncRequest1: 46
+    SendSyncRequest2: 47
+    SendSyncRequest3: 48
+    SendSyncRequest4: 49
+    SendSyncRequest: 50
+    SetThreadPriority: 12
+    SetTimer: 27
+    SignalEvent: 24
+    SleepThread: 10
+    UnmapMemoryBlock: 32
+    WaitSynchronization1: 36
+    WaitSynchronizationN: 37
+
+  InterruptNumbers:
+
+  ServiceAccessControl:
+   - APT:U
+   - ac:u
+   - cfg:u
+   - dsp::DSP
+   - fs:USER
+   - gsp::Gpu
+   - gsp::Lcd
+   - hid:USER
+   - http:C
+   - ndm:u
+   - ns:s
+   - nwm::EXT
+   - nwm::UDS
+   - ptm:u
+   - pxi:dev
+   - soc:U
+   - ssl:C
+   - y2r:u
+
+SystemControlInfo:
+  SaveDataSize: 0K
+  RemasterVersion: 0
+  StackSize: 0x40000
+  Dependency:
+    ac: 0x0004013000002402L
+    am: 0x0004013000001502L
+    cfg: 0x0004013000001702L
+    dsp: 0x0004013000001a02L
+    gsp: 0x0004013000001c02L
+    hid: 0x0004013000001d02L
+    http: 0x0004013000002902L
+    ndm: 0x0004013000002b02L
+    nwm: 0x0004013000002d02L
+    pdn: 0x0004013000002102L
+    ps: 0x0004013000003102L
+    ptm: 0x0004013000002202L
+    socket: 0x0004013000002e02L
+    ssl: 0x0004013000002f02L
