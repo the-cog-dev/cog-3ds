@@ -138,9 +138,24 @@ bool cog_qr_scan(CogRender *render, char *out_url, size_t out_size) {
     CAMU_StartCapture(PORT_CAM1);
 
     // ── Preview texture (512x256 RGB565) ─────────────────────────────────
-    if (C3D_TexInit(&preview_tex, 512, 256, GPU_RGB565)) {
-        C3D_TexSetFilter(&preview_tex, GPU_NEAREST, GPU_NEAREST);
-        has_preview = true;
+    // Force linearAlloc (not VRAM) so CPU writes + C3D_TexFlush actually
+    // update the GPU's view each frame. C3D_TexInit prefers VRAM which
+    // makes C3D_TexFlush a no-op after the first write.
+    memset(&preview_tex, 0, sizeof(preview_tex));
+    {
+        u32 tex_size = 512 * 256 * sizeof(u16);
+        void *tex_data = linearAlloc(tex_size);
+        if (tex_data) {
+            memset(tex_data, 0, tex_size);
+            preview_tex.data = tex_data;
+            preview_tex.fmt = (u16)GPU_RGB565;
+            preview_tex.size = tex_size;
+            preview_tex.width = 512;
+            preview_tex.height = 256;
+            preview_tex.param = GPU_TEXTURE_MAG_FILTER(GPU_NEAREST) |
+                                GPU_TEXTURE_MIN_FILTER(GPU_NEAREST);
+            has_preview = true;
+        }
     }
 
     Tex3DS_SubTexture subtex = {
@@ -235,7 +250,7 @@ bool cog_qr_scan(CogRender *render, char *out_url, size_t out_size) {
     }
 
 cleanup:
-    if (has_preview) C3D_TexDelete(&preview_tex);
+    if (has_preview && preview_tex.data) linearFree(preview_tex.data);
     if (q) quirc_destroy(q);
     CAMU_StopCapture(PORT_CAM1);
     bool busy = false;
