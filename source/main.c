@@ -300,6 +300,9 @@ int main(void) {
     CogState state = {0};
     Canvas canvas;
     canvas_init(&canvas);
+    bool touching = false;
+    touchPosition prev_touch = {0};
+    bool did_pan = false;
     int selected = 0;
     u32 last_poll_frame = 0;
     u32 frame = 0;
@@ -339,6 +342,43 @@ int main(void) {
         hidScanInput();
         u32 down = hidKeysDown();
 
+        u32 held = hidKeysHeld();
+        touchPosition touch;
+        if (held & KEY_TOUCH) {
+            hidTouchRead(&touch);
+            if (!touching) {
+                // Touch down — decide: hit a card, or start pan
+                int hit = canvas_hit_test(&canvas, touch.px, touch.py);
+                if (hit >= 0) {
+                    // Select the card (deselect previous)
+                    if (canvas.selected_idx >= 0 && canvas.selected_idx < canvas.card_count)
+                        canvas.cards[canvas.selected_idx].selected = false;
+                    canvas.selected_idx = hit;
+                    canvas.cards[hit].selected = true;
+                    did_pan = false;
+                } else {
+                    did_pan = false;  // will start panning on drag
+                }
+                touching = true;
+            } else {
+                // Touch held — drag (pan if not on a card)
+                int dx = touch.px - prev_touch.px;
+                int dy = touch.py - prev_touch.py;
+                if (canvas.selected_idx < 0 || did_pan ||
+                    canvas_hit_test(&canvas, prev_touch.px, prev_touch.py) < 0) {
+                    if (dx != 0 || dy != 0) {
+                        canvas_pan(&canvas, (float)dx, (float)dy);
+                        did_pan = true;
+                    }
+                }
+            }
+            prev_touch = touch;
+        } else if (touching) {
+            // Touch release
+            touching = false;
+            did_pan = false;
+        }
+
         if (down & KEY_START) break;
 
         if (down & KEY_DUP)   { if (selected > 0) { selected--; dirty = true; } }
@@ -352,6 +392,12 @@ int main(void) {
 
         if (down & KEY_L) canvas_zoom(&canvas, -CANVAS_ZOOM_STEP);
         if (down & KEY_R) canvas_zoom(&canvas, +CANVAS_ZOOM_STEP);
+
+        if (down & KEY_B) {
+            if (canvas.selected_idx >= 0 && canvas.selected_idx < canvas.card_count)
+                canvas.cards[canvas.selected_idx].selected = false;
+            canvas.selected_idx = -1;
+        }
 
         // Y shows the configured URL (debug)
         if (down & KEY_Y) {
