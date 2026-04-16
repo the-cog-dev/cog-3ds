@@ -22,6 +22,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <citro2d.h>
+
 #include "cJSON.h"
 #include "http.h"
 #include "config.h"
@@ -194,9 +196,25 @@ static void render_main_screens(PrintConsole *top, PrintConsole *bottom,
 int main(void) {
     gfxInitDefault();
 
+    // Try citro2d first. If it fails, fall back to PrintConsole so we
+    // never ship a regression from Phase 1.
+    bool use_citro2d = false;
+    C3D_RenderTarget *top_target = NULL;
+    C3D_RenderTarget *bottom_target = NULL;
+    if (C3D_Init(C3D_DEFAULT_CMDBUF_SIZE)) {
+        if (C2D_Init(C2D_DEFAULT_MAX_OBJECTS)) {
+            C2D_Prepare();
+            top_target = C2D_CreateScreenTarget(GFX_TOP, GFX_LEFT);
+            bottom_target = C2D_CreateScreenTarget(GFX_BOTTOM, GFX_LEFT);
+            use_citro2d = (top_target != NULL && bottom_target != NULL);
+        }
+    }
+
     PrintConsole top, bottom;
-    consoleInit(GFX_TOP, &top);
-    consoleInit(GFX_BOTTOM, &bottom);
+    if (!use_citro2d) {
+        consoleInit(GFX_TOP, &top);
+        consoleInit(GFX_BOTTOM, &bottom);
+    }
 
     Result http_rc = cog_http_init();
     if (R_FAILED(http_rc)) {
@@ -326,7 +344,17 @@ int main(void) {
             dirty = true;
         }
 
-        if (dirty) {
+        if (use_citro2d) {
+            C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
+            C2D_TargetClear(top_target, C2D_Color32(0x0d, 0x0d, 0x0d, 0xff));
+            C2D_TargetClear(bottom_target, C2D_Color32(0x0d, 0x0d, 0x0d, 0xff));
+            C2D_SceneBegin(top_target);
+            // Phase 2a will draw header + detail here
+            C2D_SceneBegin(bottom_target);
+            // Phase 2b will draw canvas here
+            C3D_FrameEnd(0);
+            dirty = false;  // citro2d re-renders every frame anyway
+        } else if (dirty) {
             render_main_screens(&top, &bottom, &state, selected, url);
             // Append status line at bottom of bottom screen
             consoleSelect(&bottom);
@@ -338,6 +366,11 @@ int main(void) {
         gfxFlushBuffers();
         gfxSwapBuffers();
         gspWaitForVBlank();
+    }
+
+    if (use_citro2d) {
+        C2D_Fini();
+        C3D_Fini();
     }
 
     cog_http_exit();
