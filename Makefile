@@ -33,9 +33,9 @@ include $(DEVKITARM)/3ds_rules
 #---------------------------------------------------------------------------------
 TARGET		:=	cog-3ds
 BUILD		:=	build
-SOURCES		:=	source
+SOURCES		:=	source source/quirc
 DATA		:=	data
-INCLUDES	:=	include
+INCLUDES	:=	include source
 GRAPHICS	:=	gfx
 GFXBUILD	:=	$(BUILD)
 

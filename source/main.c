@@ -25,6 +25,7 @@
 #include "cJSON.h"
 #include "http.h"
 #include "config.h"
+#include "qr_scan.h"
 
 #define MAX_AGENTS 32
 
@@ -125,10 +126,10 @@ static void render_setup_screen(PrintConsole *top, PrintConsole *bottom) {
     printf("    5. Save as: \x1b[36m/3ds/cog-3ds/config.txt\x1b[0m\n");
     printf("       on your SD card\n");
     printf("\n");
-    printf("    QR scanner coming in Phase 1.5\n");
-    printf("    so you won't have to type it.\n");
+    printf("    Or skip the file step entirely:\n");
+    printf("    \x1b[32mPress [X] to scan a QR code.\x1b[0m\n");
     printf("\n");
-    printf("    \x1b[37m[START]\x1b[0m  exit\n");
+    printf("    \x1b[37m[X]\x1b[0m scan QR  \x1b[37m[START]\x1b[0m exit\n");
 
     consoleSelect(bottom);
     printf("\x1b[2J\x1b[1;1H");
@@ -221,16 +222,33 @@ int main(void) {
     bool dirty = true;
     char status_msg[128] = "Polling...";
 
-    if (!have_url) {
+    // Setup screen loop: waits for START (exit) or X (QR scan). If the
+    // scan succeeds we save the URL and fall through to the main UI.
+    while (!have_url && aptMainLoop()) {
         render_setup_screen(&top, &bottom);
+        bool exit_requested = false;
         while (aptMainLoop()) {
             hidScanInput();
-            if (hidKeysDown() & KEY_START) break;
+            u32 sd = hidKeysDown();
+            if (sd & KEY_START) { exit_requested = true; break; }
+            if (sd & KEY_X) {
+                char scanned[COG_URL_MAX] = {0};
+                if (cog_qr_scan(scanned, sizeof(scanned))) {
+                    if (cog_config_save(scanned)) {
+                        strncpy(url, scanned, sizeof(url) - 1);
+                        url[sizeof(url) - 1] = '\0';
+                        have_url = true;
+                    }
+                }
+                break;  // re-render setup (if still no URL) or fall through
+            }
             gspWaitForVBlank();
         }
-        cog_http_exit();
-        gfxExit();
-        return 0;
+        if (exit_requested) {
+            cog_http_exit();
+            gfxExit();
+            return 0;
+        }
     }
 
     while (aptMainLoop()) {
