@@ -65,7 +65,8 @@ static const char *STATUS_COLOR_CODE(const char *status) {
 
 // Simple ease-out cubic: t in [0,1] -> smoothed out
 static float ease_out_cubic(float t) {
-    if (t <= 0) return 0; if (t >= 1) return 1;
+    if (t <= 0) return 0;
+    if (t >= 1) return 1;
     float x = 1 - t;
     return 1 - x * x * x;
 }
