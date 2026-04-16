@@ -12,9 +12,11 @@
 #define CAM_HEIGHT  240
 #define CAM_BUF_SIZE (CAM_WIDTH * CAM_HEIGHT * sizeof(u16))
 
-// quirc downsampled resolution
-#define Q_WIDTH   200
-#define Q_HEIGHT  120
+// quirc at full camera resolution — the 3DS 0.3MP camera needs every
+// pixel to resolve QR modules. Downsampling to 200×120 left only 1-3px
+// per module which is below quirc's reliable threshold.
+#define Q_WIDTH   CAM_WIDTH
+#define Q_HEIGHT  CAM_HEIGHT
 
 // Tile a linear RGB565 buffer into 3DS GPU Morton order and upload.
 // Adapted from FBI's screen_load_texture_untiled — proven to work on
@@ -34,18 +36,14 @@ static void tile_and_upload(C3D_Tex *tex, const u16 *src, int w, int h) {
     C3D_TexFlush(tex);
 }
 
-// Extract downsampled luma for quirc from RGB565 buffer.
-// R5G6B5: luma ≈ (R*77 + G*150 + B*29) >> 8
-static void rgb565_to_luma_half(const u16 *src, u8 *out, int w, int h) {
-    int qw = w / 2, qh = h / 2;
-    for (int y = 0; y < qh; y++) {
-        for (int x = 0; x < qw; x++) {
-            u16 px = src[(y * 2) * w + (x * 2)];
-            int r = (px >> 11) << 3;
-            int g = ((px >> 5) & 0x3f) << 2;
-            int b = (px & 0x1f) << 3;
-            out[y * qw + x] = (u8)((r * 77 + g * 150 + b * 29) >> 8);
-        }
+// Extract full-res luma from RGB565 for quirc.
+static void rgb565_to_luma(const u16 *src, u8 *out, int w, int h) {
+    for (int i = 0; i < w * h; i++) {
+        u16 px = src[i];
+        int r = (px >> 11) << 3;
+        int g = ((px >> 5) & 0x3f) << 2;
+        int b = (px & 0x1f) << 3;
+        out[i] = (u8)((r * 77 + g * 150 + b * 29) >> 8);
     }
 }
 
@@ -206,7 +204,7 @@ bool cog_qr_scan(CogRender *render, char *out_url, size_t out_size) {
         int qw = 0, qh = 0;
         u8 *qbuf = quirc_begin(q, &qw, &qh);
         if (qbuf && qw == Q_WIDTH && qh == Q_HEIGHT) {
-            rgb565_to_luma_half(cam_buf, qbuf, CAM_WIDTH, CAM_HEIGHT);
+            rgb565_to_luma(cam_buf, qbuf, CAM_WIDTH, CAM_HEIGHT);
             quirc_end(q);
 
             int n = quirc_count(q);
