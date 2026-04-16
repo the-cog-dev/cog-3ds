@@ -63,6 +63,13 @@ static const char *STATUS_COLOR_CODE(const char *status) {
     return "\x1b[37m";
 }
 
+// Simple ease-out cubic: t in [0,1] -> smoothed out
+static float ease_out_cubic(float t) {
+    if (t <= 0) return 0; if (t >= 1) return 1;
+    float x = 1 - t;
+    return 1 - x * x * x;
+}
+
 // Forward declaration — defined below after build_state_url.
 static u32 parse_hex_color(const char *hex);
 
@@ -303,6 +310,10 @@ int main(void) {
     bool touching = false;
     touchPosition prev_touch = {0};
     bool did_pan = false;
+    u64 touch_start_ms = 0;
+    u64 lift_start_ms = 0;
+    const u64 LIFT_THRESHOLD_MS = 500;
+    const u64 LIFT_ANIM_MS = 150;
     int selected = 0;
     u32 last_poll_frame = 0;
     u32 frame = 0;
@@ -347,25 +358,44 @@ int main(void) {
         if (held & KEY_TOUCH) {
             hidTouchRead(&touch);
             if (!touching) {
-                // Touch down — decide: hit a card, or start pan
                 int hit = canvas_hit_test(&canvas, touch.px, touch.py);
                 if (hit >= 0) {
-                    // Select the card (deselect previous)
                     if (canvas.selected_idx >= 0 && canvas.selected_idx < canvas.card_count)
                         canvas.cards[canvas.selected_idx].selected = false;
                     canvas.selected_idx = hit;
                     canvas.cards[hit].selected = true;
+                    touch_start_ms = osGetTime();
                     did_pan = false;
                 } else {
-                    did_pan = false;  // will start panning on drag
+                    did_pan = false;
                 }
                 touching = true;
-            } else {
-                // Touch held — drag (pan if not on a card)
+            }
+            else {
                 int dx = touch.px - prev_touch.px;
                 int dy = touch.py - prev_touch.py;
-                if (canvas.selected_idx < 0 || did_pan ||
-                    canvas_hit_test(&canvas, prev_touch.px, prev_touch.py) < 0) {
+
+                // Check for long-press lift trigger
+                if (canvas.lifted_idx < 0 && canvas.selected_idx >= 0 && !did_pan) {
+                    u64 now = osGetTime();
+                    if (now - touch_start_ms >= LIFT_THRESHOLD_MS) {
+                        canvas.lifted_idx = canvas.selected_idx;
+                        canvas.cards[canvas.lifted_idx].lifted = true;
+                        lift_start_ms = now;
+                    }
+                }
+
+                // Drive lift animation
+                if (canvas.lifted_idx >= 0) {
+                    u64 now = osGetTime();
+                    float t = (now - lift_start_ms) / (float)LIFT_ANIM_MS;
+                    if (t > 1.0f) t = 1.0f;
+                    canvas.cards[canvas.lifted_idx].lift_scale = 1.0f + 0.2f * ease_out_cubic(t);
+                }
+
+                // Panning only if not lifted and the initial touch wasn't on a card
+                if (canvas.lifted_idx < 0 &&
+                    (did_pan || canvas_hit_test(&canvas, prev_touch.px, prev_touch.py) < 0)) {
                     if (dx != 0 || dy != 0) {
                         canvas_pan(&canvas, (float)dx, (float)dy);
                         did_pan = true;
@@ -374,7 +404,12 @@ int main(void) {
             }
             prev_touch = touch;
         } else if (touching) {
-            // Touch release
+            // Touch release — drop lifted card back to 1.0 scale
+            if (canvas.lifted_idx >= 0 && canvas.lifted_idx < canvas.card_count) {
+                canvas.cards[canvas.lifted_idx].lifted = false;
+                canvas.cards[canvas.lifted_idx].lift_scale = 1.0f;
+                canvas.lifted_idx = -1;
+            }
             touching = false;
             did_pan = false;
         }
