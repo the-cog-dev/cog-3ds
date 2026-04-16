@@ -242,23 +242,8 @@ bool cog_qr_scan(CogRender *render, char *out_url, size_t out_size) {
 
         scan_count++;
 
-        // Convert YUV→RGB565 and DMA-tile into the GPU texture
-        if (has_preview) {
-            yuv422_to_rgb565(frame, preview_rgb, CAM_WIDTH, CAM_HEIGHT);
-            GSPGPU_FlushDataCache(preview_rgb, CAM_WIDTH * CAM_HEIGHT * 2);
-            C3D_SyncDisplayTransfer(
-                (u32 *)preview_rgb,
-                GX_BUFFER_DIM(CAM_WIDTH, CAM_HEIGHT),
-                (u32 *)preview_tex.data,
-                GX_BUFFER_DIM(512, 256),
-                GX_TRANSFER_FLIP_VERT(1) |
-                GX_TRANSFER_OUT_TILED(1) |
-                GX_TRANSFER_RAW_COPY(0) |
-                GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGB565) |
-                GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGB565) |
-                GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO)
-            );
-        }
+        // Camera preview disabled — GPU texture streaming needs more
+        // work (Phase 2c revisit). Scan still runs on luma below.
 
         // Feed luma to quirc.
         int qw = 0, qh = 0;
@@ -280,7 +265,7 @@ bool cog_qr_scan(CogRender *render, char *out_url, size_t out_size) {
                         memcpy(out_url, data.payload, copy_len);
                         out_url[copy_len] = '\0';
                         success = true;
-                        draw_preview_frame(render, &preview_img, has_preview,
+                        draw_status_frame(render, "GOT IT!",
                                            "decoded URL!", scan_count);
                         // short pause so user sees confirmation
                         for (int f = 0; f < 45; f++) gspWaitForVBlank();
@@ -296,7 +281,7 @@ bool cog_qr_scan(CogRender *render, char *out_url, size_t out_size) {
             }
         }
 
-        draw_preview_frame(render, &preview_img, has_preview,
+        draw_status_frame(render, "SCANNING...",
                            last_error[0] ? last_error : "scanning...",
                            scan_count);
     }
