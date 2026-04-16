@@ -600,9 +600,11 @@ int main(void) {
         }
 
         frame++;
-        gfxFlushBuffers();
-        gfxSwapBuffers();
-        gspWaitForVBlank();
+        if (!use_citro2d) {
+            gfxFlushBuffers();
+            gfxSwapBuffers();
+            gspWaitForVBlank();
+        }
     }
 
     if (use_citro2d) cog_render_exit(&render);
