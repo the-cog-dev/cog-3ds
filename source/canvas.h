@@ -1,0 +1,56 @@
+// Workshop canvas — bottom-screen view. Maintains camera state
+// (pan + zoom), draws cards through the camera transform, and
+// hit-tests screen taps back to card indices.
+//
+// World coords: desktop-native pixels. 1 world unit = 1 desktop pixel.
+// Screen coords: 320x240 3DS bottom screen.
+
+#ifndef COG_CANVAS_H
+#define COG_CANVAS_H
+
+#include "card.h"
+
+#define CANVAS_MAX_CARDS 32
+#define CANVAS_SCREEN_W  320
+#define CANVAS_SCREEN_H  240
+#define CANVAS_ZOOM_MIN  0.3f
+#define CANVAS_ZOOM_MAX  2.0f
+#define CANVAS_ZOOM_STEP 0.15f
+
+typedef struct {
+    Card cards[CANVAS_MAX_CARDS];
+    int card_count;
+    float cam_x, cam_y;
+    float cam_zoom;
+    int selected_idx;  // -1 = none
+    int lifted_idx;    // -1 = not dragging
+} Canvas;
+
+void canvas_init(Canvas *cv);
+
+// Apply camera transform: world -> screen.
+void canvas_world_to_screen(const Canvas *cv, float wx, float wy,
+                            float *sx, float *sy);
+void canvas_screen_to_world(const Canvas *cv, float sx, float sy,
+                            float *wx, float *wy);
+
+// Hit-test a screen-coord touch against all cards. Returns index of
+// topmost card under the point, or -1 if none. Topmost = later in
+// array (drawn later = in front).
+int canvas_hit_test(const Canvas *cv, float sx, float sy);
+
+// Pan the camera (screen-space delta — divides by zoom internally).
+void canvas_pan(Canvas *cv, float dsx, float dsy);
+
+// Zoom toward the center of the screen.
+void canvas_zoom(Canvas *cv, float delta);
+
+// Draw the whole canvas (background + all cards in render order).
+void canvas_draw(CogRender *r, const Canvas *cv);
+
+// Frame-the-cards helper: center camera on bounding box of all
+// cards and pick zoom that fits them on screen. Call after first
+// /state poll populates cards.
+void canvas_frame_all(Canvas *cv);
+
+#endif
