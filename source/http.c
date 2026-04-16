@@ -34,8 +34,6 @@ static int do_request(HTTPC_RequestMethod method, const char *url,
     // Identify ourselves so the server logs are useful
     httpcAddRequestHeaderField(&ctx, "User-Agent", "TheCog3DS/0.2");
     httpcSetKeepAlive(&ctx, HTTPC_KEEPALIVE_DISABLED);
-    // 5-second timeout so unreachable servers don't hang the app forever
-    httpcSetSocketTimeout(&ctx, 5000000000ULL);
 
     if (method == HTTPC_METHOD_POST && body_json != NULL) {
         httpcAddRequestHeaderField(&ctx, "Content-Type", "application/json");
