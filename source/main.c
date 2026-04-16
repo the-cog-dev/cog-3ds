@@ -544,8 +544,10 @@ int main(void) {
             dirty = true;
         }
 
-        // Poll every 5 sec (60 fps × 5)
-        if (frame == 0 || frame - last_poll_frame >= 60 * 5) {
+        // Poll every 5 sec (60 fps × 5). Skip frame 0 so the first
+        // render fires before any blocking HTTP call — prevents the
+        // black-screen hang if the server is unreachable.
+        if (frame > 0 && (frame == 1 || frame - last_poll_frame >= 60 * 5)) {
             char state_url[COG_URL_MAX + 16];
             build_state_url(url, state_url, sizeof(state_url));
 
