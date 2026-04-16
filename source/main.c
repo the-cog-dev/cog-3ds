@@ -224,16 +224,13 @@ static void render_setup_screen(CogRender *r, const char *saved_url,
             snprintf(cdown, sizeof(cdown), "Connecting in %.0f...", countdown_sec);
             cog_render_text(r, cdown, 80, 130, THEME_FONT_LABEL, THEME_TEXT_PRIMARY);
         }
-        cog_render_text(r, "[A] connect now   [X] scan new QR",
-                        80, 165, THEME_FONT_LABEL, THEME_TEXT_DIMMED);
+        cog_render_text(r, "[A] connect now   [X] scan QR   [Y] type URL",
+                        40, 165, THEME_FONT_LABEL, THEME_TEXT_DIMMED);
     } else {
         cog_render_text(r, "No Remote View URL saved.",
                         80, 90, THEME_FONT_LABEL, THEME_TEXT_PRIMARY);
-        cog_render_text(r, "Press X to scan a QR code.",
+        cog_render_text(r, "[X] scan QR code   [Y] type URL",
                         80, 115, THEME_FONT_LABEL, THEME_TEXT_DIMMED);
-        cog_render_text(r, "Or save the URL to:", 80, 145, THEME_FONT_LABEL, THEME_TEXT_DIMMED);
-        cog_render_text(r, "sdmc:/3ds/cog-3ds/config.txt",
-                        80, 165, THEME_FONT_FOOTER, THEME_GOLD_DIM);
     }
     cog_render_text(r, "[START] exit", 80, 200, THEME_FONT_FOOTER, THEME_TEXT_DIMMED);
 
@@ -406,6 +403,23 @@ setup:
                 if (cog_qr_scan(&render, scanned, sizeof(scanned))) {
                     if (cog_config_save(scanned)) {
                         strncpy(url, scanned, sizeof(url) - 1);
+                        url[sizeof(url) - 1] = '\0';
+                        have_url = true;
+                    }
+                }
+                setup_start = osGetTime();
+            }
+            if (sd & KEY_Y) {
+                SwkbdState swkbd;
+                char typed[COG_URL_MAX] = {0};
+                swkbdInit(&swkbd, SWKBD_TYPE_NORMAL, 2, COG_URL_MAX - 1);
+                swkbdSetHintText(&swkbd, "http://192.168.x.x:port/r/token/");
+                swkbdSetInitialText(&swkbd, have_url ? url : "http://");
+                swkbdSetFeatures(&swkbd, SWKBD_DEFAULT_QWERTY);
+                SwkbdButton btn = swkbdInputText(&swkbd, typed, sizeof(typed));
+                if (btn == SWKBD_BUTTON_RIGHT && typed[0]) {
+                    if (cog_config_save(typed)) {
+                        strncpy(url, typed, sizeof(url) - 1);
                         url[sizeof(url) - 1] = '\0';
                         have_url = true;
                     }
