@@ -410,13 +410,10 @@ setup:
                 setup_start = osGetTime();
             }
             if (sd & KEY_Y) {
-                // Flush citro2d GPU state before the system keyboard
-                // applet takes over the screen, otherwise returning
-                // from the applet leaves VRAM in a bad state → crash.
-                if (use_citro2d) {
-                    C3D_FrameEnd(0);
-                    gspWaitForVBlank();
-                }
+                // The system keyboard applet takes over the GPU and
+                // invalidates all VRAM state. Full citro2d teardown
+                // before + reinit after is the only safe approach.
+                if (use_citro2d) cog_render_exit(&render);
 
                 SwkbdState swkbd;
                 char typed[COG_URL_MAX] = {0};
@@ -426,11 +423,7 @@ setup:
                 swkbdSetFeatures(&swkbd, SWKBD_DEFAULT_QWERTY);
                 SwkbdButton btn = swkbdInputText(&swkbd, typed, sizeof(typed));
 
-                // Re-establish citro2d after the applet returns
-                if (use_citro2d) {
-                    C2D_Prepare();
-                    gspWaitForVBlank();
-                }
+                if (use_citro2d) use_citro2d = cog_render_init(&render);
 
                 if (btn == SWKBD_BUTTON_RIGHT && typed[0]) {
                     if (cog_config_save(typed)) {
