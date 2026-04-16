@@ -210,20 +210,42 @@ static void sync_canvas_from_state(Canvas *cv, const CogState *state) {
 
 // ── Rendering ────────────────────────────────────────────────────────────────
 
-static void render_setup_screen(CogRender *r) {
+static void render_setup_screen(CogRender *r, const char *saved_url,
+                                float countdown_sec) {
     cog_render_frame_begin(r);
     cog_render_target_top(r, THEME_BG_DARK);
-    cog_render_text(r, "The Cog", 150, 40, THEME_FONT_HEADER, THEME_GOLD);
-    cog_render_text(r, "No Remote View URL saved.",
-                    80, 90, THEME_FONT_LABEL, THEME_TEXT_PRIMARY);
-    cog_render_text(r, "Press X to scan a QR code.",
-                    80, 115, THEME_FONT_LABEL, THEME_TEXT_DIMMED);
-    cog_render_text(r, "Or save the URL to:", 80, 145, THEME_FONT_LABEL, THEME_TEXT_DIMMED);
-    cog_render_text(r, "sdmc:/3ds/cog-3ds/config.txt", 80, 165, THEME_FONT_FOOTER, THEME_GOLD_DIM);
+    cog_render_text(r, "The Cog", 150, 30, THEME_FONT_HEADER, THEME_GOLD);
+
+    if (saved_url && saved_url[0]) {
+        cog_render_text(r, "Saved URL:", 80, 75, THEME_FONT_LABEL, THEME_TEXT_DIMMED);
+        cog_render_text(r, saved_url, 80, 95, THEME_FONT_FOOTER, THEME_GOLD_DIM);
+        if (countdown_sec > 0) {
+            char cdown[32];
+            snprintf(cdown, sizeof(cdown), "Connecting in %.0f...", countdown_sec);
+            cog_render_text(r, cdown, 80, 130, THEME_FONT_LABEL, THEME_TEXT_PRIMARY);
+        }
+        cog_render_text(r, "[A] connect now   [X] scan new QR",
+                        80, 165, THEME_FONT_LABEL, THEME_TEXT_DIMMED);
+    } else {
+        cog_render_text(r, "No Remote View URL saved.",
+                        80, 90, THEME_FONT_LABEL, THEME_TEXT_PRIMARY);
+        cog_render_text(r, "Press X to scan a QR code.",
+                        80, 115, THEME_FONT_LABEL, THEME_TEXT_DIMMED);
+        cog_render_text(r, "Or save the URL to:", 80, 145, THEME_FONT_LABEL, THEME_TEXT_DIMMED);
+        cog_render_text(r, "sdmc:/3ds/cog-3ds/config.txt",
+                        80, 165, THEME_FONT_FOOTER, THEME_GOLD_DIM);
+    }
+    cog_render_text(r, "[START] exit", 80, 200, THEME_FONT_FOOTER, THEME_TEXT_DIMMED);
+
     cog_render_target_bottom(r, THEME_BG_CANVAS);
-    cog_render_text(r, "Setup needed", 80, 100, THEME_FONT_HEADER, THEME_GOLD);
-    cog_render_text(r, "[X] scan   [START] exit",
-                    80, 160, THEME_FONT_LABEL, THEME_TEXT_DIMMED);
+    if (saved_url && saved_url[0]) {
+        cog_render_text(r, "The Cog", 100, 80, THEME_FONT_HEADER, THEME_GOLD);
+        cog_render_text(r, "Connecting...", 100, 120, THEME_FONT_LABEL, THEME_TEXT_DIMMED);
+    } else {
+        cog_render_text(r, "Setup needed", 80, 100, THEME_FONT_HEADER, THEME_GOLD);
+        cog_render_text(r, "[X] scan   [START] exit",
+                        80, 160, THEME_FONT_LABEL, THEME_TEXT_DIMMED);
+    }
     cog_render_frame_end(r);
 }
 
@@ -341,51 +363,69 @@ int main(void) {
     bool dirty = true;
     char status_msg[128] = "Polling...";
 
-    // Setup screen loop: waits for START (exit) or X (QR scan). If the
-    // scan succeeds we save the URL and fall through to the main UI.
-    while (!have_url && aptMainLoop()) {
-        bool exit_requested = false;
-        bool scan_requested = false;
+    // Setup screen — shows on every boot. If a saved URL exists, auto-
+    // advances after 3 seconds. User can press A to skip, X to scan a
+    // new QR, or START to exit. SELECT from the main loop returns here.
+setup:
+    {
+        u64 setup_start = osGetTime();
+        const u64 AUTO_ADVANCE_MS = 3000;
+        bool advanced = false;
+
         while (aptMainLoop()) {
             hidScanInput();
             u32 sd = hidKeysDown();
-            if (sd & KEY_START) { exit_requested = true; break; }
-            if (sd & KEY_X) { scan_requested = true; break; }
+
+            if (sd & KEY_START) {
+                if (use_citro2d) cog_render_exit(&render);
+                cog_http_exit();
+                gfxExit();
+                return 0;
+            }
+            if (sd & KEY_A && have_url) { advanced = true; break; }
+            if (sd & KEY_X) {
+                char scanned[COG_URL_MAX] = {0};
+                if (cog_qr_scan(&render, scanned, sizeof(scanned))) {
+                    if (cog_config_save(scanned)) {
+                        strncpy(url, scanned, sizeof(url) - 1);
+                        url[sizeof(url) - 1] = '\0';
+                        have_url = true;
+                    }
+                }
+                setup_start = osGetTime();
+            }
+
+            u64 elapsed = osGetTime() - setup_start;
+            if (have_url && elapsed >= AUTO_ADVANCE_MS) { advanced = true; break; }
+
+            float remaining = have_url ? (AUTO_ADVANCE_MS - elapsed) / 1000.0f : 0;
             if (use_citro2d) {
-                render_setup_screen(&render);
+                render_setup_screen(&render, url, remaining);
             } else {
-                // Legacy PrintConsole path — render once, then just idle.
-                static bool drawn = false;
-                if (!drawn) {
+                if (elapsed < 100) {
                     consoleSelect(&top);
-                    printf("\x1b[2J\x1b[1;1H");
-                    printf("\n  \x1b[31mNo Remote View URL saved.\x1b[0m\n\n");
-                    printf("  \x1b[32mPress [X] to scan a QR code.\x1b[0m\n");
-                    printf("  \x1b[37m[START]\x1b[0m exit\n");
-                    consoleSelect(&bottom);
-                    printf("\x1b[2J\x1b[1;1H");
-                    printf("\n  \x1b[33mSetup needed\x1b[0m\n");
-                    drawn = true;
+                    printf("\x1b[2J\x1b[1;1H\n");
+                    if (have_url) {
+                        printf("  \x1b[33mSaved URL:\x1b[0m %s\n\n", url);
+                        printf("  Auto-connecting in 3s...\n");
+                        printf("  \x1b[37m[A]\x1b[0m connect now  \x1b[37m[X]\x1b[0m scan QR\n");
+                    } else {
+                        printf("  \x1b[31mNo URL saved.\x1b[0m\n\n");
+                        printf("  \x1b[37m[X]\x1b[0m scan QR  \x1b[37m[START]\x1b[0m exit\n");
+                    }
                 }
                 gspWaitForVBlank();
             }
         }
-        if (exit_requested) {
+        if (!advanced && !have_url) {
             if (use_citro2d) cog_render_exit(&render);
             cog_http_exit();
             gfxExit();
             return 0;
         }
-        if (scan_requested) {
-            char scanned[COG_URL_MAX] = {0};
-            if (cog_qr_scan(&render, scanned, sizeof(scanned))) {
-                if (cog_config_save(scanned)) {
-                    strncpy(url, scanned, sizeof(url) - 1);
-                    url[sizeof(url) - 1] = '\0';
-                    have_url = true;
-                }
-            }
-        }
+        last_poll_frame = 0;
+        frame = 0;
+        dirty = true;
     }
 
     while (aptMainLoop()) {
@@ -497,6 +537,9 @@ int main(void) {
                 canvas.cards[canvas.selected_idx].selected = false;
             canvas.selected_idx = -1;
         }
+
+        // SELECT returns to the setup screen to change URL / rescan QR
+        if (down & KEY_SELECT) goto setup;
 
         // Y shows the configured URL (debug)
         if (down & KEY_Y) {

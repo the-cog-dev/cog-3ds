@@ -25,7 +25,7 @@ static void draw_header(CogRender *r, const char *project_name,
 static void draw_footer(CogRender *r) {
     float fy = TOP_H - FOOTER_H;
     cog_render_rect(0, fy, TOP_W, 1, THEME_DIVIDER);
-    cog_render_text(r, "[A] refresh  [X] rescan  [L/R] zoom  [B] deselect",
+    cog_render_text(r, "[A] refresh [X] QR [L/R] zoom [SEL] setup",
                     12, fy + 4, THEME_FONT_FOOTER, THEME_TEXT_DIMMED);
 }
 
