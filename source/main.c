@@ -135,6 +135,24 @@ static void build_state_url(const char *base_url, char *out, size_t out_size) {
     snprintf(out, out_size, "%sstate", base_url);
 }
 
+static void build_window_url(const char *base_url, const char *agent_id,
+                             char *out, size_t out_size) {
+    snprintf(out, out_size, "%sworkshop/window/%s", base_url, agent_id);
+}
+
+// POST new position for the given card. Fire-and-forget; we don't
+// block the render loop on network.
+static void post_card_position(const char *base_url, const Card *c) {
+    char url[COG_URL_MAX + 96];
+    build_window_url(base_url, c->id, url, sizeof(url));
+    char body[96];
+    snprintf(body, sizeof(body), "{\"x\":%.0f,\"y\":%.0f}", c->x, c->y);
+    char *resp = NULL;
+    size_t resp_len = 0;
+    cog_http_post_json(url, body, &resp, &resp_len);
+    if (resp) free(resp);
+}
+
 // Parse a hex color string "#RRGGBB" into citro2d's 0xAABBGGRR layout.
 // Returns a grey fallback for invalid input.
 static u32 parse_hex_color(const char *hex) {
@@ -394,6 +412,14 @@ int main(void) {
                     canvas.cards[canvas.lifted_idx].lift_scale = 1.0f + 0.2f * ease_out_cubic(t);
                 }
 
+                // Drag-move the lifted card
+                if (canvas.lifted_idx >= 0 && (dx != 0 || dy != 0)) {
+                    Card *lc = &canvas.cards[canvas.lifted_idx];
+                    // Screen delta -> world delta via zoom
+                    lc->x += (float)dx / canvas.cam_zoom;
+                    lc->y += (float)dy / canvas.cam_zoom;
+                }
+
                 // Panning only if not lifted and the initial touch wasn't on a card
                 if (canvas.lifted_idx < 0 &&
                     (did_pan || canvas_hit_test(&canvas, prev_touch.px, prev_touch.py) < 0)) {
@@ -405,10 +431,12 @@ int main(void) {
             }
             prev_touch = touch;
         } else if (touching) {
-            // Touch release — drop lifted card back to 1.0 scale
+            // Touch release — drop lifted card back to 1.0 scale, sync position
             if (canvas.lifted_idx >= 0 && canvas.lifted_idx < canvas.card_count) {
-                canvas.cards[canvas.lifted_idx].lifted = false;
-                canvas.cards[canvas.lifted_idx].lift_scale = 1.0f;
+                Card *lc = &canvas.cards[canvas.lifted_idx];
+                lc->lifted = false;
+                lc->lift_scale = 1.0f;
+                post_card_position(url, lc);
                 canvas.lifted_idx = -1;
             }
             touching = false;
