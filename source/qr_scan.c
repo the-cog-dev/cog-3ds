@@ -1,6 +1,8 @@
 #include "qr_scan.h"
 #include "quirc/quirc.h"
 #include "theme.h"
+#include "cJSON.h"
+#include "http.h"
 
 #include <3ds.h>
 #include <math.h>
@@ -52,6 +54,40 @@ static bool payload_is_valid_url(const uint8_t *payload, int len) {
     if (memcmp(payload, "http://", 7) != 0 &&
         memcmp(payload, "https://", 8) != 0) return false;
     return true;
+}
+
+// If the scanned URL is a 3ds.thecog.dev short link, GET it and extract
+// the real LAN/tunnel URL from the JSON response. Returns true if
+// resolved successfully (out_url updated), false if not a short link
+// or resolution failed (out_url unchanged).
+static bool resolve_short_link(const char *scanned, char *out_url, size_t out_size) {
+    if (!strstr(scanned, "3ds.thecog.dev/")) return false;
+
+    char *body = NULL;
+    size_t body_len = 0;
+    int code = cog_http_get(scanned, &body, &body_len);
+    if (code != 200 || !body) { if (body) free(body); return false; }
+
+    // Parse JSON: {"lan":"...", "tunnel":"..."}
+    cJSON *root = cJSON_Parse(body);
+    free(body);
+    if (!root) return false;
+
+    // Prefer LAN (HTTP, works now) over tunnel (HTTPS, Phase 4)
+    const char *url = NULL;
+    cJSON *lan = cJSON_GetObjectItemCaseSensitive(root, "lan");
+    cJSON *tunnel = cJSON_GetObjectItemCaseSensitive(root, "tunnel");
+    if (cJSON_IsString(lan) && lan->valuestring[0]) url = lan->valuestring;
+    else if (cJSON_IsString(tunnel) && tunnel->valuestring[0]) url = tunnel->valuestring;
+
+    bool ok = false;
+    if (url) {
+        strncpy(out_url, url, out_size - 1);
+        out_url[out_size - 1] = '\0';
+        ok = true;
+    }
+    cJSON_Delete(root);
+    return ok;
 }
 
 static void draw_status_frame(CogRender *r, const char *top_big,
@@ -219,6 +255,8 @@ bool cog_qr_scan(CogRender *render, char *out_url, size_t out_size) {
                         if (copy_len >= out_size) copy_len = out_size - 1;
                         memcpy(out_url, data.payload, copy_len);
                         out_url[copy_len] = '\0';
+                        // If it's a 3ds.thecog.dev short link, resolve it
+                        resolve_short_link(out_url, out_url, out_size);
                         success = true;
                         if (has_preview)
                             draw_preview_frame(render, &preview_img,
