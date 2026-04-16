@@ -83,12 +83,44 @@ bool cog_net_recv(CogRender *render, char *out_url, size_t out_size) {
     addr.sin_addr.s_addr = INADDR_ANY;
 
     if (bind(server_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        if (render) {
+            cog_render_frame_begin(render);
+            cog_render_target_top(render, THEME_BG_DARK);
+            cog_render_text(render, "bind() failed — port in use?", 40, 100,
+                            THEME_FONT_LABEL, THEME_STATUS_DISCONNECTED);
+            cog_render_target_bottom(render, THEME_BG_CANVAS);
+            cog_render_frame_end(render);
+            for (int f = 0; f < 120; f++) gspWaitForVBlank();
+        }
         close(server_fd); socExit(); free(soc_buf); return false;
     }
-    listen(server_fd, 1);
+    if (listen(server_fd, 1) < 0) {
+        if (render) {
+            cog_render_frame_begin(render);
+            cog_render_target_top(render, THEME_BG_DARK);
+            cog_render_text(render, "listen() failed", 80, 100,
+                            THEME_FONT_LABEL, THEME_STATUS_DISCONNECTED);
+            cog_render_target_bottom(render, THEME_BG_CANVAS);
+            cog_render_frame_end(render);
+            for (int f = 0; f < 120; f++) gspWaitForVBlank();
+        }
+        close(server_fd); socExit(); free(soc_buf); return false;
+    }
 
     // Non-blocking so we can poll for B button
-    fcntl(server_fd, F_SETFL, fcntl(server_fd, F_GETFL, 0) | O_NONBLOCK);
+    int flags = fcntl(server_fd, F_GETFL, 0);
+    if (flags < 0 || fcntl(server_fd, F_SETFL, flags | O_NONBLOCK) < 0) {
+        if (render) {
+            cog_render_frame_begin(render);
+            cog_render_target_top(render, THEME_BG_DARK);
+            cog_render_text(render, "fcntl() failed — no non-blocking", 20, 100,
+                            THEME_FONT_LABEL, THEME_STATUS_DISCONNECTED);
+            cog_render_target_bottom(render, THEME_BG_CANVAS);
+            cog_render_frame_end(render);
+            for (int f = 0; f < 120; f++) gspWaitForVBlank();
+        }
+        close(server_fd); socExit(); free(soc_buf); return false;
+    }
 
     bool success = false;
     char status[64] = "Waiting for connection...";
