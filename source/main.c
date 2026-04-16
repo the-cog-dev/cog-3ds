@@ -410,26 +410,81 @@ setup:
                 setup_start = osGetTime();
             }
             if (sd & KEY_Y) {
-                // SwkbdState is large — static to avoid stack overflow
-                // (Canvas + CogState already use ~16KB of the 32KB stack).
-                // citro2d teardown: the applet invalidates all VRAM.
-                static SwkbdState swkbd;
+                // Custom touch keyboard — the system keyboard applet
+                // crashes because APT tries to save VRAM that citro2d
+                // has taken over (data abort at 0x1F4C7800 in apt.o).
                 static char typed[COG_URL_MAX];
-                memset(typed, 0, sizeof(typed));
+                strncpy(typed, have_url ? url : "http://", sizeof(typed) - 1);
+                typed[sizeof(typed) - 1] = '\0';
+                int cursor = (int)strlen(typed);
 
-                if (use_citro2d) {
-                    gspWaitForVBlank();
-                    cog_render_exit(&render);
+                // Character palette — rows of keys
+                static const char *rows[] = {
+                    "1234567890",
+                    "qwertyuiop",
+                    "asdfghjkl:",
+                    "zxcvbnm-_.",
+                    "/ "
+                };
+                static const int row_count = 5;
+                const float key_w = 28, key_h = 28, pad = 2;
+                const float kb_y = 100;  // keyboard starts at this Y on bottom screen
+                bool kb_done = false;
+
+                while (!kb_done && aptMainLoop()) {
+                    hidScanInput();
+                    u32 kd = hidKeysDown();
+                    if (kd & KEY_B && cursor > 0) typed[--cursor] = '\0';
+                    if (kd & KEY_A) { kb_done = true; break; }
+                    if (kd & KEY_START) { typed[0] = '\0'; kb_done = true; break; }
+
+                    // Touch input — detect which key was tapped
+                    if (kd & KEY_TOUCH) {
+                        touchPosition tp;
+                        hidTouchRead(&tp);
+                        for (int r = 0; r < row_count; r++) {
+                            int len = (int)strlen(rows[r]);
+                            float rx = (320 - len * (key_w + pad)) / 2;
+                            float ry = kb_y + r * (key_h + pad);
+                            for (int c = 0; c < len; c++) {
+                                float kx = rx + c * (key_w + pad);
+                                if (tp.px >= kx && tp.px < kx + key_w &&
+                                    tp.py >= ry && tp.py < ry + key_h) {
+                                    if (cursor < (int)sizeof(typed) - 1) {
+                                        typed[cursor++] = rows[r][c];
+                                        typed[cursor] = '\0';
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (use_citro2d) {
+                        cog_render_frame_begin(&render);
+                        cog_render_target_top(&render, THEME_BG_DARK);
+                        cog_render_text(&render, "Type URL", 140, 20, THEME_FONT_HEADER, THEME_GOLD);
+                        cog_render_text(&render, typed, 12, 80, THEME_FONT_FOOTER, THEME_TEXT_PRIMARY);
+                        cog_render_text(&render, "[A] save   [B] backspace   [START] cancel",
+                                        30, 210, THEME_FONT_FOOTER, THEME_TEXT_DIMMED);
+                        cog_render_target_bottom(&render, THEME_BG_CANVAS);
+                        // Draw keyboard
+                        for (int r = 0; r < row_count; r++) {
+                            int len = (int)strlen(rows[r]);
+                            float rx = (320 - len * (key_w + pad)) / 2;
+                            float ry = kb_y + r * (key_h + pad);
+                            for (int c = 0; c < len; c++) {
+                                float kx = rx + c * (key_w + pad);
+                                cog_render_rounded_rect(kx, ry, key_w, key_h, 3, THEME_DIVIDER);
+                                char ch[2] = { rows[r][c], '\0' };
+                                cog_render_text(&render, ch, kx + 8, ry + 4,
+                                                THEME_FONT_CARD, THEME_TEXT_PRIMARY);
+                            }
+                        }
+                        cog_render_frame_end(&render);
+                    }
                 }
 
-                swkbdInit(&swkbd, SWKBD_TYPE_NORMAL, 2, COG_URL_MAX - 1);
-                swkbdSetHintText(&swkbd, "Paste URL here");
-                swkbdSetInitialText(&swkbd, have_url ? url : "http://");
-                SwkbdButton btn = swkbdInputText(&swkbd, typed, sizeof(typed));
-
-                if (use_citro2d) use_citro2d = cog_render_init(&render);
-
-                if (btn == SWKBD_BUTTON_RIGHT && typed[0]) {
+                if (typed[0] && kb_done) {
                     if (cog_config_save(typed)) {
                         strncpy(url, typed, sizeof(url) - 1);
                         url[sizeof(url) - 1] = '\0';
