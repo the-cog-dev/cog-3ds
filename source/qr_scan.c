@@ -23,6 +23,43 @@
 #define Q_WIDTH   200
 #define Q_HEIGHT  120
 
+// Extract full-res luma from YUV422.  In YUYV layout, Y is at every
+// even byte: [Y0, U, Y1, V, Y0, U, Y1, V, ...].
+static void yuv422_extract_luma(const uint8_t *yuv, uint8_t *luma, int w, int h) {
+    for (int i = 0; i < w * h; i++) {
+        luma[i] = yuv[i * 2];
+    }
+}
+
+// Tile a linear L8 buffer into 3DS GPU Morton-order (8x8 Z-curve tiles).
+// tex_w and tex_h must be powers of 2. The source image (src_w x src_h)
+// is placed at the top-left of the texture; remaining texels are zeroed.
+// The 3DS GPU lays tiles left-to-right then BOTTOM-to-top.
+static void tile_l8_morton(const uint8_t *src, uint8_t *dst,
+                           int src_w, int src_h,
+                           int tex_w, int tex_h) {
+    // Morton lookup for a 3-bit coordinate (0..7) → interleaved bits.
+    // x bits go to even positions, y bits to odd positions.
+    static const uint8_t morton[8] = { 0,1,4,5,16,17,20,21 };
+
+    memset(dst, 0, tex_w * tex_h);  // clear padding region
+
+    int tiles_x = tex_w / 8;
+    for (int y = 0; y < src_h; y++) {
+        // GPU tiles go bottom-to-top
+        int gy = (tex_h - 1 - y);
+        int tile_y = gy / 8;
+        int sub_y  = gy % 8;
+        for (int x = 0; x < src_w; x++) {
+            int tile_x = x / 8;
+            int sub_x  = x % 8;
+            int tile_idx = tile_y * tiles_x + tile_x;
+            int offset   = tile_idx * 64 + (morton[sub_x] | (morton[sub_y] << 1));
+            dst[offset] = src[y * src_w + x];
+        }
+    }
+}
+
 // Extract the luma plane from a YUV422 camera frame and downsample 2x.
 // buf is CAM_WIDTH * CAM_HEIGHT * 2 bytes (YUYV interleaved per pair).
 // Writes CAM_WIDTH/2 * CAM_HEIGHT/2 luma bytes into out.
@@ -87,6 +124,35 @@ static void draw_status_frame(CogRender *r, const char *top_big,
     cog_render_frame_end(r);
 }
 
+// Draw a frame with the live camera preview on the top screen and status
+// text on the bottom. Falls back to a dark background if the preview
+// texture wasn't allocated.
+static void draw_preview_frame(CogRender *r, C2D_Image *preview,
+                               bool has_preview, const char *bot_status,
+                               int scan_count) {
+    cog_render_frame_begin(r);
+
+    // Top: camera preview (or dark bg if preview unavailable)
+    cog_render_target_top(r, THEME_BG_DARK);
+    if (has_preview) {
+        C2D_DrawImageAt(*preview, 0, 0, 0.5f, NULL, 1.0f, 1.0f);
+    }
+    // Overlay: semi-transparent bar at bottom of preview
+    cog_render_rect(0, 200, 400, 40, C2D_Color32(0x0d, 0x0d, 0x0d, 0xbb));
+    cog_render_text(r, "Aim at QR code", 120, 210, THEME_FONT_LABEL, THEME_GOLD);
+
+    // Bottom: status
+    cog_render_target_bottom(r, THEME_BG_CANVAS);
+    cog_render_text(r, "QR Scanner", 12, 12, THEME_FONT_HEADER, THEME_GOLD);
+    cog_render_text(r, bot_status, 12, 60, THEME_FONT_LABEL, THEME_TEXT_PRIMARY);
+    char buf[32];
+    snprintf(buf, sizeof(buf), "Frames: %d", scan_count);
+    cog_render_text(r, buf, 12, 90, THEME_FONT_LABEL, THEME_TEXT_DIMMED);
+    cog_render_text(r, "[B] cancel", 12, 210, THEME_FONT_FOOTER, THEME_TEXT_DIMMED);
+
+    cog_render_frame_end(r);
+}
+
 bool cog_qr_scan(CogRender *render, char *out_url, size_t out_size) {
     if (!out_url || out_size == 0) return false;
     out_url[0] = '\0';
@@ -96,6 +162,9 @@ bool cog_qr_scan(CogRender *render, char *out_url, size_t out_size) {
     bool success = false;
     uint8_t *frame = NULL;
     struct quirc *q = NULL;
+    C3D_Tex preview_tex;
+    bool has_preview = false;
+    u8 *preview_luma = NULL;
 
     // ── Init camera ──────────────────────────────────────────────────────
     Result rc = camInit();
@@ -129,6 +198,31 @@ bool cog_qr_scan(CogRender *render, char *out_url, size_t out_size) {
     CAMU_ClearBuffer(PORT_CAM1);
     CAMU_StartCapture(PORT_CAM1);
 
+    // ── Camera preview texture ───────────────────────────────────────────
+    // GPU textures must be power-of-2.  We use 512x256 L8 for the 400x240
+    // camera frame.  Tiling is done in software (Morton order) since the
+    // GX transfer engine doesn't support L8.
+    if (C3D_TexInit(&preview_tex, 512, 256, GPU_L8)) {
+        C3D_TexSetFilter(&preview_tex, GPU_NEAREST, GPU_NEAREST);
+        preview_luma = (u8 *)malloc(CAM_WIDTH * CAM_HEIGHT);
+        if (preview_luma) {
+            has_preview = true;
+        } else {
+            C3D_TexDelete(&preview_tex);  // don't leak GPU mem
+        }
+    }
+
+    // Subtexture: the 400x240 region within the 512x256 texture.
+    Tex3DS_SubTexture preview_subtex = {
+        .width  = 400,
+        .height = 240,
+        .left   = 0.0f,
+        .top    = 1.0f,
+        .right  = 400.0f / 512.0f,
+        .bottom = 1.0f - (240.0f / 256.0f),
+    };
+    C2D_Image preview_img = { &preview_tex, &preview_subtex };
+
     // ── Init quirc ───────────────────────────────────────────────────────
     q = quirc_new();
     if (!q || quirc_resize(q, Q_WIDTH, Q_HEIGHT) < 0) {
@@ -161,6 +255,14 @@ bool cog_qr_scan(CogRender *render, char *out_url, size_t out_size) {
 
         scan_count++;
 
+        // Upload camera preview to GPU texture (software Morton tiling)
+        if (has_preview) {
+            yuv422_extract_luma(frame, preview_luma, CAM_WIDTH, CAM_HEIGHT);
+            tile_l8_morton(preview_luma, (uint8_t *)preview_tex.data,
+                          CAM_WIDTH, CAM_HEIGHT, 512, 256);
+            C3D_TexFlush(&preview_tex);
+        }
+
         // Feed luma to quirc.
         int qw = 0, qh = 0;
         uint8_t *qbuf = quirc_begin(q, &qw, &qh);
@@ -181,7 +283,8 @@ bool cog_qr_scan(CogRender *render, char *out_url, size_t out_size) {
                         memcpy(out_url, data.payload, copy_len);
                         out_url[copy_len] = '\0';
                         success = true;
-                        draw_status_frame(render, "GOT IT!", "decoded URL", scan_count);
+                        draw_preview_frame(render, &preview_img, has_preview,
+                                           "decoded URL!", scan_count);
                         // short pause so user sees confirmation
                         for (int f = 0; f < 45; f++) gspWaitForVBlank();
                         goto cleanup;
@@ -196,12 +299,14 @@ bool cog_qr_scan(CogRender *render, char *out_url, size_t out_size) {
             }
         }
 
-        draw_status_frame(render, "SCANNING...",
-                          last_error[0] ? last_error : "scanning...",
-                          scan_count);
+        draw_preview_frame(render, &preview_img, has_preview,
+                           last_error[0] ? last_error : "scanning...",
+                           scan_count);
     }
 
 cleanup:
+    if (preview_luma) free(preview_luma);
+    if (has_preview) C3D_TexDelete(&preview_tex);
     if (q) quirc_destroy(q);
     CAMU_StopCapture(PORT_CAM1);
     CAMU_Activate(SELECT_NONE);
