@@ -32,6 +32,7 @@
 #include "http.h"
 #include "config.h"
 #include "qr_scan.h"
+#include "net_recv.h"
 
 #define MAX_AGENTS 32
 
@@ -224,13 +225,13 @@ static void render_setup_screen(CogRender *r, const char *saved_url,
             snprintf(cdown, sizeof(cdown), "Connecting in %.0f...", countdown_sec);
             cog_render_text(r, cdown, 80, 130, THEME_FONT_LABEL, THEME_TEXT_PRIMARY);
         }
-        cog_render_text(r, "[A] connect now   [X] scan QR   [Y] type URL",
-                        40, 165, THEME_FONT_LABEL, THEME_TEXT_DIMMED);
+        cog_render_text(r, "[A] connect  [X] QR  [Y] type  [L] network",
+                        20, 165, THEME_FONT_LABEL, THEME_TEXT_DIMMED);
     } else {
         cog_render_text(r, "No Remote View URL saved.",
                         80, 90, THEME_FONT_LABEL, THEME_TEXT_PRIMARY);
-        cog_render_text(r, "[X] scan QR code   [Y] type URL",
-                        80, 115, THEME_FONT_LABEL, THEME_TEXT_DIMMED);
+        cog_render_text(r, "[X] QR  [Y] type URL  [L] receive over network",
+                        30, 115, THEME_FONT_LABEL, THEME_TEXT_DIMMED);
     }
     cog_render_text(r, "[START] exit", 80, 200, THEME_FONT_FOOTER, THEME_TEXT_DIMMED);
 
@@ -403,6 +404,17 @@ setup:
                 if (cog_qr_scan(&render, scanned, sizeof(scanned))) {
                     if (cog_config_save(scanned)) {
                         strncpy(url, scanned, sizeof(url) - 1);
+                        url[sizeof(url) - 1] = '\0';
+                        have_url = true;
+                    }
+                }
+                setup_start = osGetTime();
+            }
+            if (sd & KEY_L) {
+                char received[COG_URL_MAX] = {0};
+                if (cog_net_recv(&render, received, sizeof(received))) {
+                    if (cog_config_save(received)) {
+                        strncpy(url, received, sizeof(url) - 1);
                         url[sizeof(url) - 1] = '\0';
                         have_url = true;
                     }
