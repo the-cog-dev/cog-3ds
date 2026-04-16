@@ -23,40 +23,29 @@
 #define Q_WIDTH   200
 #define Q_HEIGHT  120
 
-// Extract full-res luma from YUV422.  In YUYV layout, Y is at every
-// even byte: [Y0, U, Y1, V, Y0, U, Y1, V, ...].
-static void yuv422_extract_luma(const uint8_t *yuv, uint8_t *luma, int w, int h) {
-    for (int i = 0; i < w * h; i++) {
-        luma[i] = yuv[i * 2];
-    }
-}
-
-// Tile a linear L8 buffer into 3DS GPU Morton-order (8x8 Z-curve tiles).
-// tex_w and tex_h must be powers of 2. The source image (src_w x src_h)
-// is placed at the top-left of the texture; remaining texels are zeroed.
-// The 3DS GPU lays tiles left-to-right then BOTTOM-to-top.
-static void tile_l8_morton(const uint8_t *src, uint8_t *dst,
-                           int src_w, int src_h,
-                           int tex_w, int tex_h) {
-    // Morton lookup for a 3-bit coordinate (0..7) → interleaved bits.
-    // x bits go to even positions, y bits to odd positions.
-    static const uint8_t morton[8] = { 0,1,4,5,16,17,20,21 };
-
-    memset(dst, 0, tex_w * tex_h);  // clear padding region
-
-    int tiles_x = tex_w / 8;
-    for (int y = 0; y < src_h; y++) {
-        // GPU tiles go bottom-to-top
-        int gy = (tex_h - 1 - y);
-        int tile_y = gy / 8;
-        int sub_y  = gy % 8;
-        for (int x = 0; x < src_w; x++) {
-            int tile_x = x / 8;
-            int sub_x  = x % 8;
-            int tile_idx = tile_y * tiles_x + tile_x;
-            int offset   = tile_idx * 64 + (morton[sub_x] | (morton[sub_y] << 1));
-            dst[offset] = src[y * src_w + x];
-        }
+// Convert YUV422 → RGB565 for the camera preview texture. Integer-only
+// BT.601 conversion — fast enough for 400×240 at 15fps on the ARM11.
+static void yuv422_to_rgb565(const uint8_t *yuv, uint16_t *rgb, int w, int h) {
+    for (int i = 0; i < w * h; i += 2) {
+        int y0 = yuv[i * 2];
+        int u  = yuv[i * 2 + 1];
+        int y1 = yuv[i * 2 + 2];
+        int v  = yuv[i * 2 + 3];
+        int c0 = y0 - 16, c1 = y1 - 16, d = u - 128, e = v - 128;
+        int r0 = (298*c0 + 409*e + 128) >> 8;
+        int g0 = (298*c0 - 100*d - 208*e + 128) >> 8;
+        int b0 = (298*c0 + 516*d + 128) >> 8;
+        int r1 = (298*c1 + 409*e + 128) >> 8;
+        int g1 = (298*c1 - 100*d - 208*e + 128) >> 8;
+        int b1 = (298*c1 + 516*d + 128) >> 8;
+        if (r0<0) r0=0; if (r0>255) r0=255;
+        if (g0<0) g0=0; if (g0>255) g0=255;
+        if (b0<0) b0=0; if (b0>255) b0=255;
+        if (r1<0) r1=0; if (r1>255) r1=255;
+        if (g1<0) g1=0; if (g1>255) g1=255;
+        if (b1<0) b1=0; if (b1>255) b1=255;
+        rgb[i]   = (uint16_t)(((r0>>3)<<11) | ((g0>>2)<<5) | (b0>>3));
+        rgb[i+1] = (uint16_t)(((r1>>3)<<11) | ((g1>>2)<<5) | (b1>>3));
     }
 }
 
@@ -164,7 +153,7 @@ bool cog_qr_scan(CogRender *render, char *out_url, size_t out_size) {
     struct quirc *q = NULL;
     C3D_Tex preview_tex;
     bool has_preview = false;
-    u8 *preview_luma = NULL;
+    u16 *preview_rgb = NULL;
 
     // ── Init camera ──────────────────────────────────────────────────────
     Result rc = camInit();
@@ -199,20 +188,18 @@ bool cog_qr_scan(CogRender *render, char *out_url, size_t out_size) {
     CAMU_StartCapture(PORT_CAM1);
 
     // ── Camera preview texture ───────────────────────────────────────────
-    // GPU textures must be power-of-2.  We use 512x256 L8 for the 400x240
-    // camera frame.  Tiling is done in software (Morton order) since the
-    // GX transfer engine doesn't support L8.
-    if (C3D_TexInit(&preview_tex, 512, 256, GPU_L8)) {
+    // RGB565 texture with hardware DMA tiling via GX_DisplayTransfer.
+    // This works with VRAM-allocated textures (unlike CPU-side L8 Morton).
+    if (C3D_TexInit(&preview_tex, 512, 256, GPU_RGB565)) {
         C3D_TexSetFilter(&preview_tex, GPU_NEAREST, GPU_NEAREST);
-        preview_luma = (u8 *)malloc(CAM_WIDTH * CAM_HEIGHT);
-        if (preview_luma) {
+        preview_rgb = (u16 *)linearAlloc(CAM_WIDTH * CAM_HEIGHT * 2);
+        if (preview_rgb) {
             has_preview = true;
         } else {
-            C3D_TexDelete(&preview_tex);  // don't leak GPU mem
+            C3D_TexDelete(&preview_tex);
         }
     }
 
-    // Subtexture: the 400x240 region within the 512x256 texture.
     Tex3DS_SubTexture preview_subtex = {
         .width  = 400,
         .height = 240,
@@ -255,12 +242,22 @@ bool cog_qr_scan(CogRender *render, char *out_url, size_t out_size) {
 
         scan_count++;
 
-        // Upload camera preview to GPU texture (software Morton tiling)
+        // Convert YUV→RGB565 and DMA-tile into the GPU texture
         if (has_preview) {
-            yuv422_extract_luma(frame, preview_luma, CAM_WIDTH, CAM_HEIGHT);
-            tile_l8_morton(preview_luma, (uint8_t *)preview_tex.data,
-                          CAM_WIDTH, CAM_HEIGHT, 512, 256);
-            C3D_TexFlush(&preview_tex);
+            yuv422_to_rgb565(frame, preview_rgb, CAM_WIDTH, CAM_HEIGHT);
+            GSPGPU_FlushDataCache(preview_rgb, CAM_WIDTH * CAM_HEIGHT * 2);
+            C3D_SyncDisplayTransfer(
+                (u32 *)preview_rgb,
+                GX_BUFFER_DIM(CAM_WIDTH, CAM_HEIGHT),
+                (u32 *)preview_tex.data,
+                GX_BUFFER_DIM(512, 256),
+                GX_TRANSFER_FLIP_VERT(1) |
+                GX_TRANSFER_OUT_TILED(1) |
+                GX_TRANSFER_RAW_COPY(0) |
+                GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGB565) |
+                GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGB565) |
+                GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO)
+            );
         }
 
         // Feed luma to quirc.
@@ -305,7 +302,7 @@ bool cog_qr_scan(CogRender *render, char *out_url, size_t out_size) {
     }
 
 cleanup:
-    if (preview_luma) free(preview_luma);
+    if (preview_rgb) linearFree(preview_rgb);
     if (has_preview) C3D_TexDelete(&preview_tex);
     if (q) quirc_destroy(q);
     CAMU_StopCapture(PORT_CAM1);
