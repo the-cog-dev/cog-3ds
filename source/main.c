@@ -22,7 +22,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <citro2d.h>
+#include "render.h"
+#include "theme.h"
 
 #include "cJSON.h"
 #include "http.h"
@@ -196,19 +197,8 @@ static void render_main_screens(PrintConsole *top, PrintConsole *bottom,
 int main(void) {
     gfxInitDefault();
 
-    // Try citro2d first. If it fails, fall back to PrintConsole so we
-    // never ship a regression from Phase 1.
-    bool use_citro2d = false;
-    C3D_RenderTarget *top_target = NULL;
-    C3D_RenderTarget *bottom_target = NULL;
-    if (C3D_Init(C3D_DEFAULT_CMDBUF_SIZE)) {
-        if (C2D_Init(C2D_DEFAULT_MAX_OBJECTS)) {
-            C2D_Prepare();
-            top_target = C2D_CreateScreenTarget(GFX_TOP, GFX_LEFT);
-            bottom_target = C2D_CreateScreenTarget(GFX_BOTTOM, GFX_LEFT);
-            use_citro2d = (top_target != NULL && bottom_target != NULL);
-        }
-    }
+    CogRender render = {0};
+    bool use_citro2d = cog_render_init(&render);
 
     PrintConsole top, bottom;
     if (!use_citro2d) {
@@ -345,15 +335,13 @@ int main(void) {
         }
 
         if (use_citro2d) {
-            C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
-            C2D_TargetClear(top_target, C2D_Color32(0x0d, 0x0d, 0x0d, 0xff));
-            C2D_TargetClear(bottom_target, C2D_Color32(0x0d, 0x0d, 0x0d, 0xff));
-            C2D_SceneBegin(top_target);
-            // Phase 2a will draw header + detail here
-            C2D_SceneBegin(bottom_target);
-            // Phase 2b will draw canvas here
-            C3D_FrameEnd(0);
-            dirty = false;  // citro2d re-renders every frame anyway
+            cog_render_frame_begin(&render);
+            cog_render_target_top(&render, THEME_BG_DARK);
+            cog_render_text(&render, "The Cog", 10, 10, THEME_FONT_HEADER, THEME_GOLD);
+            cog_render_target_bottom(&render, THEME_BG_CANVAS);
+            cog_render_text(&render, "canvas", 10, 10, THEME_FONT_FOOTER, THEME_TEXT_DIMMED);
+            cog_render_frame_end(&render);
+            dirty = false;
         } else if (dirty) {
             render_main_screens(&top, &bottom, &state, selected, url);
             // Append status line at bottom of bottom screen
@@ -368,10 +356,7 @@ int main(void) {
         gspWaitForVBlank();
     }
 
-    if (use_citro2d) {
-        C2D_Fini();
-        C3D_Fini();
-    }
+    if (use_citro2d) cog_render_exit(&render);
 
     cog_http_exit();
     gfxExit();
