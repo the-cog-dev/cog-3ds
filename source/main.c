@@ -488,7 +488,8 @@ int main(void) {
     char url[COG_URL_MAX] = {0};
     bool have_url = cog_config_load(url, sizeof(url));
 
-    CogState state = {0};
+    static CogState state;
+    memset(&state, 0, sizeof(state));
     Canvas canvas;
     canvas_init(&canvas);
     bool touching = false;
