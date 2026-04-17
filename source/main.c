@@ -738,7 +738,7 @@ setup:
             poll_done = false;
             poll_active = true;
             poll_thread = threadCreate(poll_thread_func, NULL,
-                                       4096, 0x30, -1, false);
+                                       0x10000, 0x30, -1, false);
             if (!poll_thread) {
                 poll_active = false;
                 snprintf(status_msg, sizeof(status_msg), "Thread error");
@@ -786,6 +786,10 @@ setup:
                         state.agent_count, state.connection_count);
             cog_render_target_bottom(&render, THEME_BG_CANVAS);
             canvas_draw(&render, &canvas);
+            // Status bar at bottom of canvas
+            cog_render_rect(0, 225, 320, 15, THEME_BG_DARK);
+            cog_render_text(&render, status_msg, 4, 227,
+                            THEME_FONT_FOOTER, THEME_TEXT_DIMMED);
             cog_render_frame_end(&render);
             dirty = false;
         } else if (dirty) {
