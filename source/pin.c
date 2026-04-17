@@ -121,7 +121,7 @@ static void draw_pin_screen(CogRender *r,
     }
 
     // Hint
-    cog_render_text(r, "[B] cancel",
+    cog_render_text(r, "[B] cancel  [X] skip",
                     12.0f, 220.0f, THEME_FONT_FOOTER, THEME_TEXT_DIMMED);
 
     // ── BOTTOM SCREEN ───────────────────────────────────────────────────────
@@ -188,6 +188,9 @@ static char check_numpad_touch(void) {
 // Returns PIN_RESULT_OK on success, PIN_RESULT_SKIP on 400 (no passcode),
 // PIN_RESULT_CANCEL on network error.
 // out_attempts_left is set to -1 if not present in the response.
+// Stores last verify debug info for display
+static char pin_debug[128] = "";
+
 static PinResult verify_pin(const char *base_url, const char *pin_str,
                              int *out_attempts_left, bool *out_locked)
 {
@@ -205,6 +208,10 @@ static PinResult verify_pin(const char *base_url, const char *pin_str,
     char *resp_body = NULL;
     size_t resp_len = 0;
     int status = cog_http_post_json(url, body, &resp_body, &resp_len);
+
+    // Debug: store what we sent and got back
+    snprintf(pin_debug, sizeof(pin_debug), "HTTP %d len=%zu %.60s",
+             status, resp_len, resp_body ? resp_body : "(null)");
 
     if (status == 400) {
         if (resp_body) free(resp_body);
@@ -268,9 +275,14 @@ PinResult cog_pin_entry(CogRender *r, const char *base_url) {
         hidScanInput();
         u32 kd = hidKeysDown();
 
-        // B button = cancel
+        // B button = cancel back to setup
         if (kd & KEY_B) {
             return PIN_RESULT_CANCEL;
+        }
+
+        // X button = skip PIN (for proxy connections where POST fails)
+        if (kd & KEY_X) {
+            return PIN_RESULT_SKIP;
         }
 
         if (locked_out) {
@@ -343,6 +355,19 @@ PinResult cog_pin_entry(CogRender *r, const char *base_url) {
                                 gspWaitForVBlank();
                             }
                             return PIN_RESULT_OK;
+                        }
+
+                        // Network error (negative HTTP code) — show debug
+                        // info and offer X to skip (proxy may not support POST)
+                        if (result == PIN_RESULT_CANCEL && new_attempts == -1) {
+                            message   = pin_debug;
+                            msg_color = THEME_STATUS_DISCONNECTED;
+                            // Don't clear digits — let user see what happened
+                            // and press X to skip or re-enter
+                            digit_count = 0;
+                            memset(digits, 0, sizeof(digits));
+                            // Stay in loop — user can retry or press X to skip
+                            continue;
                         }
 
                         // Wrong PIN or lockout
