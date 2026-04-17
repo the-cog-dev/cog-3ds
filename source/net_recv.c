@@ -143,17 +143,22 @@ bool cog_net_recv(CogRender *render, char *out_url, size_t out_size) {
             int n = recv(client_fd, buf, sizeof(buf) - 1, 0);
             if (n > 0) {
                 buf[n] = '\0';
-                // Strip trailing whitespace/newlines
-                while (n > 0 && (buf[n-1] == '\n' || buf[n-1] == '\r' || buf[n-1] == ' '))
-                    buf[--n] = '\0';
-                // Validate it looks like a URL
-                if (n > 10 && strncmp(buf, "http", 4) == 0) {
-                    strncpy(out_url, buf, out_size - 1);
+                // Find URL in the data — curl sends HTTP headers before
+                // the body, so the URL might not be at position 0.
+                char *url_start = strstr(buf, "http://");
+                if (!url_start) url_start = strstr(buf, "https://");
+                if (url_start) {
+                    // Trim at first whitespace/newline after the URL
+                    char *end = url_start;
+                    while (*end && *end != '\n' && *end != '\r' && *end != ' ')
+                        end++;
+                    *end = '\0';
+                    strncpy(out_url, url_start, out_size - 1);
                     out_url[out_size - 1] = '\0';
                     success = true;
                     snprintf(status, sizeof(status), "Received!");
                 } else {
-                    snprintf(status, sizeof(status), "Invalid data received");
+                    snprintf(status, sizeof(status), "No URL found in data");
                 }
             }
             // Send a simple response so curl/browser sees success
