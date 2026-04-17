@@ -80,9 +80,26 @@ static void fetch_output(OutputState *st, const char *base_url,
         cJSON_ArrayForEach(item, arr) {
             if (st->count >= MAX_LINES) break;
             if (cJSON_IsString(item) && item->valuestring) {
-                strncpy(st->lines[st->count], item->valuestring,
-                        MAX_LINE_LEN - 1);
-                st->lines[st->count][MAX_LINE_LEN - 1] = '\0';
+                // Strip ANSI escape codes (ESC[...X sequences)
+                // before storing — the 3DS can't render them.
+                const char *src = item->valuestring;
+                char *dst = st->lines[st->count];
+                int di = 0;
+                for (int si = 0; src[si] && di < MAX_LINE_LEN - 1; si++) {
+                    if (src[si] == '\x1b' && src[si + 1] == '[') {
+                        // Skip ESC[ then all params (digits, semicolons, ?)
+                        // until the command letter (A-Z a-z)
+                        si += 2;
+                        while (src[si] && !((src[si] >= 'A' && src[si] <= 'Z') ||
+                               (src[si] >= 'a' && src[si] <= 'z'))) si++;
+                        // si now points at the command letter, loop will si++
+                        continue;
+                    }
+                    if (src[si] == '\x1b') continue; // bare ESC
+                    if ((unsigned char)src[si] < 0x20 && src[si] != '\t') continue; // other control chars
+                    dst[di++] = src[si];
+                }
+                dst[di] = '\0';
                 st->count++;
             }
         }
