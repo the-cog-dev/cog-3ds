@@ -13,12 +13,21 @@
 #include <stddef.h>
 
 #define COG_URL_MAX 512
+#define COG_URL_HISTORY 3
 
-// Load the saved URL into out_url (size COG_URL_MAX). Returns true if a
-// usable URL was loaded, false if no config exists or it's invalid.
+typedef struct {
+    char urls[COG_URL_HISTORY][COG_URL_MAX];
+    int count;  // how many valid URLs (0..3)
+} CogUrlHistory;
+
+// Load URL history (up to 3 lines from config.txt). Returns count of valid URLs.
+int cog_config_load_history(CogUrlHistory *hist);
+
+// Load just the most recent URL (backward compat). Returns true if valid.
 bool cog_config_load(char *out_url, size_t out_size);
 
-// Save url to disk. Creates parent dirs as needed. Returns true on success.
+// Save url to disk — pushes to top of history, shifts others down,
+// drops the 4th. Creates parent dirs as needed. Returns true on success.
 bool cog_config_save(const char *url);
 
 #endif

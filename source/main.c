@@ -211,38 +211,45 @@ static void sync_canvas_from_state(Canvas *cv, const CogState *state) {
 
 // ── Rendering ────────────────────────────────────────────────────────────────
 
-static void render_setup_screen(CogRender *r, const char *saved_url,
-                                float countdown_sec) {
+static void render_setup_screen(CogRender *r, const CogUrlHistory *hist,
+                                int sel, float countdown_sec) {
     cog_render_frame_begin(r);
     cog_render_target_top(r, THEME_BG_DARK);
-    cog_render_text(r, "The Cog", 150, 30, THEME_FONT_HEADER, THEME_GOLD);
+    cog_render_text(r, "The Cog", 150, 20, THEME_FONT_HEADER, THEME_GOLD);
 
-    if (saved_url && saved_url[0]) {
-        cog_render_text(r, "Saved URL:", 80, 75, THEME_FONT_LABEL, THEME_TEXT_DIMMED);
-        cog_render_text(r, saved_url, 80, 95, THEME_FONT_FOOTER, THEME_GOLD_DIM);
+    if (hist->count > 0) {
+        cog_render_text(r, "Saved URLs:", 12, 55, THEME_FONT_LABEL, THEME_TEXT_DIMMED);
+        for (int i = 0; i < hist->count; i++) {
+            float y = 75 + i * 28;
+            bool is_sel = (i == sel);
+            u32 color = is_sel ? THEME_GOLD : THEME_TEXT_DIMMED;
+            const char *arrow = is_sel ? "> " : "  ";
+            char line[COG_URL_MAX + 4];
+            snprintf(line, sizeof(line), "%s%s", arrow, hist->urls[i]);
+            cog_render_text(r, line, 12, y, THEME_FONT_FOOTER, color);
+        }
         if (countdown_sec > 0) {
             char cdown[32];
             snprintf(cdown, sizeof(cdown), "Connecting in %.0f...", countdown_sec);
-            cog_render_text(r, cdown, 80, 130, THEME_FONT_LABEL, THEME_TEXT_PRIMARY);
+            cog_render_text(r, cdown, 12, 165, THEME_FONT_LABEL, THEME_TEXT_PRIMARY);
         }
-        cog_render_text(r, "[A] connect  [X] QR  [Y] type  [L] network",
-                        20, 165, THEME_FONT_LABEL, THEME_TEXT_DIMMED);
+        cog_render_text(r, "D-pad to pick  [A] connect  [L] network",
+                        12, 190, THEME_FONT_FOOTER, THEME_TEXT_DIMMED);
+        cog_render_text(r, "[X] QR  [Y] type  [START] exit",
+                        12, 210, THEME_FONT_FOOTER, THEME_TEXT_DIMMED);
     } else {
-        cog_render_text(r, "No Remote View URL saved.",
-                        80, 90, THEME_FONT_LABEL, THEME_TEXT_PRIMARY);
-        cog_render_text(r, "[X] QR  [Y] type URL  [L] receive over network",
-                        30, 115, THEME_FONT_LABEL, THEME_TEXT_DIMMED);
+        cog_render_text(r, "No URLs saved.", 80, 90, THEME_FONT_LABEL, THEME_TEXT_PRIMARY);
+        cog_render_text(r, "[Y] type URL  [L] network  [X] QR",
+                        30, 130, THEME_FONT_LABEL, THEME_TEXT_DIMMED);
+        cog_render_text(r, "[START] exit", 80, 200, THEME_FONT_FOOTER, THEME_TEXT_DIMMED);
     }
-    cog_render_text(r, "[START] exit", 80, 200, THEME_FONT_FOOTER, THEME_TEXT_DIMMED);
 
     cog_render_target_bottom(r, THEME_BG_CANVAS);
-    if (saved_url && saved_url[0]) {
-        cog_render_text(r, "The Cog", 100, 80, THEME_FONT_HEADER, THEME_GOLD);
-        cog_render_text(r, "Connecting...", 100, 120, THEME_FONT_LABEL, THEME_TEXT_DIMMED);
+    cog_render_text(r, "The Cog", 100, 80, THEME_FONT_HEADER, THEME_GOLD);
+    if (hist->count > 0) {
+        cog_render_text(r, hist->urls[sel], 12, 130, THEME_FONT_FOOTER, THEME_GOLD_DIM);
     } else {
-        cog_render_text(r, "Setup needed", 80, 100, THEME_FONT_HEADER, THEME_GOLD);
-        cog_render_text(r, "[X] scan   [START] exit",
-                        80, 160, THEME_FONT_LABEL, THEME_TEXT_DIMMED);
+        cog_render_text(r, "Add a URL to connect", 60, 130, THEME_FONT_LABEL, THEME_TEXT_DIMMED);
     }
     cog_render_frame_end(r);
 }
@@ -384,9 +391,18 @@ int main(void) {
     // new QR, or START to exit. SELECT from the main loop returns here.
 setup:
     {
+        CogUrlHistory hist;
+        cog_config_load_history(&hist);
+        int url_sel = 0;  // which URL in history is selected
+
         u64 setup_start = osGetTime();
         const u64 AUTO_ADVANCE_MS = 3000;
         bool advanced = false;
+        have_url = hist.count > 0;
+        if (have_url) {
+            strncpy(url, hist.urls[0], sizeof(url) - 1);
+            url[sizeof(url) - 1] = '\0';
+        }
 
         while (aptMainLoop()) {
             hidScanInput();
@@ -398,6 +414,17 @@ setup:
                 gfxExit();
                 return 0;
             }
+            // D-pad to pick from history
+            if (sd & KEY_DUP && url_sel > 0) {
+                url_sel--;
+                strncpy(url, hist.urls[url_sel], sizeof(url) - 1);
+                setup_start = osGetTime();
+            }
+            if (sd & KEY_DDOWN && url_sel < hist.count - 1) {
+                url_sel++;
+                strncpy(url, hist.urls[url_sel], sizeof(url) - 1);
+                setup_start = osGetTime();
+            }
             if (sd & KEY_A && have_url) { advanced = true; break; }
             if (sd & KEY_X) {
                 char scanned[COG_URL_MAX] = {0};
@@ -406,6 +433,8 @@ setup:
                         strncpy(url, scanned, sizeof(url) - 1);
                         url[sizeof(url) - 1] = '\0';
                         have_url = true;
+                        cog_config_load_history(&hist);
+                        url_sel = 0;
                     }
                 }
                 setup_start = osGetTime();
@@ -417,6 +446,8 @@ setup:
                         strncpy(url, received, sizeof(url) - 1);
                         url[sizeof(url) - 1] = '\0';
                         have_url = true;
+                        cog_config_load_history(&hist);
+                        url_sel = 0;
                     }
                 }
                 setup_start = osGetTime();
@@ -511,19 +542,16 @@ setup:
 
             float remaining = have_url ? (AUTO_ADVANCE_MS - elapsed) / 1000.0f : 0;
             if (use_citro2d) {
-                render_setup_screen(&render, url, remaining);
+                render_setup_screen(&render, &hist, url_sel, remaining);
             } else {
                 if (elapsed < 100) {
                     consoleSelect(&top);
                     printf("\x1b[2J\x1b[1;1H\n");
-                    if (have_url) {
-                        printf("  \x1b[33mSaved URL:\x1b[0m %s\n\n", url);
-                        printf("  Auto-connecting in 3s...\n");
-                        printf("  \x1b[37m[A]\x1b[0m connect now  \x1b[37m[X]\x1b[0m scan QR\n");
-                    } else {
-                        printf("  \x1b[31mNo URL saved.\x1b[0m\n\n");
-                        printf("  \x1b[37m[X]\x1b[0m scan QR  \x1b[37m[START]\x1b[0m exit\n");
+                    for (int i = 0; i < hist.count; i++) {
+                        printf("  %s %s\n", i == url_sel ? ">" : " ", hist.urls[i]);
                     }
+                    if (have_url) printf("\n  Auto-connecting in 3s...\n");
+                    else printf("  No URL saved.\n");
                 }
                 gspWaitForVBlank();
             }
