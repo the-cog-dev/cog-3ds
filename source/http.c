@@ -94,6 +94,74 @@ int cog_http_get(const char *url, char **out_body, size_t *out_len) {
     return do_request(HTTPC_METHOD_GET, url, NULL, out_body, out_len);
 }
 
+// URL-encode a string for use in query parameters.
+// Only unreserved chars (A-Z a-z 0-9 - _ . ~) pass through unencoded.
+static void url_encode(const char *src, char *dst, size_t dst_size) {
+    static const char hex[] = "0123456789ABCDEF";
+    size_t di = 0;
+    for (int i = 0; src[i] && di + 3 < dst_size; i++) {
+        unsigned char c = (unsigned char)src[i];
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+            (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~') {
+            dst[di++] = c;
+        } else {
+            dst[di++] = '%';
+            dst[di++] = hex[(c >> 4) & 0xF];
+            dst[di++] = hex[c & 0xF];
+        }
+    }
+    dst[di] = '\0';
+}
+
+// Detect if a URL goes through the 3ds.thecog.dev proxy.
+// If so, convert POST to GET via the /gp/ (GET-POST) endpoint.
+// Cloudflare Workers POST responses are fundamentally incompatible
+// with libctru's httpc — GET responses work fine.
+static bool is_proxy_url(const char *url) {
+    return strstr(url, "3ds.thecog.dev/p/") != NULL;
+}
+
+// Convert a proxy POST URL to a GET-based POST URL.
+// Input:  http://3ds.thecog.dev/p/CODE/some/path
+// Output: http://3ds.thecog.dev/p/CODE/gp/some/path?_body=ENCODED
+static int do_proxy_post_as_get(const char *url, const char *body_json,
+                                char **out_body, size_t *out_len) {
+    // Find "/p/CODE/" in the URL
+    const char *p_start = strstr(url, "/p/");
+    if (!p_start) return -1;
+
+    // Find the end of "/p/CODE/"
+    const char *code_start = p_start + 3;  // skip "/p/"
+    const char *code_end = strchr(code_start, '/');
+    if (!code_end) return -1;
+    code_end++;  // include the trailing '/'
+
+    // Everything after "/p/CODE/" is the path
+    const char *path = code_end;
+
+    // URL-encode the JSON body
+    char encoded_body[2048];
+    url_encode(body_json ? body_json : "{}", encoded_body, sizeof(encoded_body));
+
+    // Build the GET URL: replace "/p/CODE/path" with "/p/CODE/gp/path?_body=ENCODED"
+    char get_url[2048];
+    // Copy everything up to and including "/p/CODE/"
+    size_t prefix_len = (size_t)(code_end - url);
+    if (prefix_len >= sizeof(get_url) - 1) return -1;
+    memcpy(get_url, url, prefix_len);
+    get_url[prefix_len] = '\0';
+
+    // Append "gp/PATH?_body=ENCODED"
+    snprintf(get_url + prefix_len, sizeof(get_url) - prefix_len,
+             "gp/%s?_body=%s", path, encoded_body);
+
+    return do_request(HTTPC_METHOD_GET, get_url, NULL, out_body, out_len);
+}
+
 int cog_http_post_json(const char *url, const char *body_json, char **out_body, size_t *out_len) {
+    // Route through GET-based proxy if going through 3ds.thecog.dev
+    if (is_proxy_url(url)) {
+        return do_proxy_post_as_get(url, body_json, out_body, out_len);
+    }
     return do_request(HTTPC_METHOD_POST, url, body_json, out_body, out_len);
 }
