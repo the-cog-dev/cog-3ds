@@ -541,6 +541,30 @@ setup:
                 strncpy(url, hist.urls[url_sel], sizeof(url) - 1);
             }
             if (sd & KEY_A && have_url) { advanced = true; break; }
+            // R = POST diagnostic — tests if POST works through Cloudflare
+            if (sd & KEY_R) {
+                char *resp = NULL; size_t rlen = 0;
+                int code = cog_http_post_json(
+                    "http://3ds.thecog.dev/api/test", "{\"test\":true}",
+                    &resp, &rlen);
+                char diag[128];
+                snprintf(diag, sizeof(diag), "POST test: HTTP %d len=%zu %.50s",
+                         code, rlen, resp ? resp : "(null)");
+                if (resp) free(resp);
+                // Show result for a few seconds
+                u64 diag_start = osGetTime();
+                while (aptMainLoop() && osGetTime() - diag_start < 5000) {
+                    hidScanInput();
+                    if (hidKeysDown()) break;
+                    cog_render_frame_begin(&render);
+                    cog_render_target_top(&render, THEME_BG_DARK);
+                    cog_render_text(&render, "POST Diagnostic", 120, 30, THEME_FONT_HEADER, THEME_GOLD);
+                    cog_render_text(&render, diag, 12, 80, THEME_FONT_FOOTER, THEME_TEXT_PRIMARY);
+                    cog_render_text(&render, "Press any button", 120, 200, THEME_FONT_FOOTER, THEME_TEXT_DIMMED);
+                    cog_render_target_bottom(&render, THEME_BG_CANVAS);
+                    cog_render_frame_end(&render);
+                }
+            }
             if (sd & KEY_X) {
                 char scanned[COG_URL_MAX] = {0};
                 if (cog_qr_scan(&render, scanned, sizeof(scanned))) {
@@ -733,7 +757,53 @@ setup:
                 case ACTION_MESSAGE: {
                     char prompt[128];
                     snprintf(prompt, sizeof(prompt), "Message to: %s", sel_card->name);
-                    ComposerResult msg = cog_composer_run(&render, prompt, NULL);
+
+                    // Fetch last output lines for chat context on top screen
+                    char out_url[512];
+                    snprintf(out_url, sizeof(out_url), "%sagent/%s/output", url, sel_card->id);
+                    char *out_body = NULL; size_t out_len = 0;
+                    int out_code = cog_http_get(out_url, &out_body, &out_len);
+
+                    // Parse output lines and strip ANSI codes
+                    static char ctx_bufs[50][256];
+                    static const char *ctx_ptrs[50];
+                    int ctx_count = 0;
+                    if (out_code == 200 && out_body) {
+                        cJSON *oroot = cJSON_Parse(out_body);
+                        if (oroot) {
+                            cJSON *oarr = cJSON_GetObjectItemCaseSensitive(oroot, "lines");
+                            if (cJSON_IsArray(oarr)) {
+                                cJSON *oline = NULL;
+                                cJSON_ArrayForEach(oline, oarr) {
+                                    if (ctx_count >= 50) break;
+                                    if (cJSON_IsString(oline) && oline->valuestring) {
+                                        // Strip ANSI
+                                        const char *s = oline->valuestring;
+                                        char *d = ctx_bufs[ctx_count];
+                                        int di = 0;
+                                        for (int si = 0; s[si] && di < 255; si++) {
+                                            if (s[si] == '\x1b' && s[si+1] == '[') {
+                                                si += 2;
+                                                while (s[si] && !((s[si]>='A' && s[si]<='Z') || (s[si]>='a' && s[si]<='z'))) si++;
+                                                continue;
+                                            }
+                                            if (s[si] == '\x1b') continue;
+                                            if ((unsigned char)s[si] < 0x20 && s[si] != '\t') continue;
+                                            d[di++] = s[si];
+                                        }
+                                        d[di] = '\0';
+                                        ctx_ptrs[ctx_count] = ctx_bufs[ctx_count];
+                                        ctx_count++;
+                                    }
+                                }
+                            }
+                            cJSON_Delete(oroot);
+                        }
+                    }
+                    if (out_body) free(out_body);
+
+                    ComposerResult msg = cog_composer_run_chat(&render, prompt, NULL,
+                                                               ctx_ptrs, ctx_count);
                     if (msg.submitted && msg.text[0]) {
                         char msg_url[512];
                         snprintf(msg_url, sizeof(msg_url), "%smessage", url);
