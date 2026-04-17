@@ -40,11 +40,15 @@ static int do_request(HTTPC_RequestMethod method, const char *url,
         httpcAddPostDataRaw(&ctx, (u32 *)body_json, strlen(body_json));
     }
 
+
     rc = httpcBeginRequest(&ctx);
     if (R_FAILED(rc)) { httpcCloseContext(&ctx); return -2; }
 
     u32 status32 = 0;
-    rc = httpcGetResponseStatusCode(&ctx, &status32);
+    // Use timeout variant (10 seconds) — the non-timeout version can
+    // hang indefinitely if Connection: close arrives before the status
+    // line is fully parsed (common with Cloudflare Worker proxies).
+    rc = httpcGetResponseStatusCodeTimeout(&ctx, &status32, 10000000000ULL);
     if (R_FAILED(rc)) { httpcCloseContext(&ctx); return -3; }
     status_code = (int)status32;
 
