@@ -541,30 +541,6 @@ setup:
                 strncpy(url, hist.urls[url_sel], sizeof(url) - 1);
             }
             if (sd & KEY_A && have_url) { advanced = true; break; }
-            // R = POST diagnostic — tests if POST works through Cloudflare
-            if (sd & KEY_R) {
-                char *resp = NULL; size_t rlen = 0;
-                int code = cog_http_post_json(
-                    "http://3ds.thecog.dev/api/test", "{\"test\":true}",
-                    &resp, &rlen);
-                char diag[128];
-                snprintf(diag, sizeof(diag), "POST test: HTTP %d len=%zu %.50s",
-                         code, rlen, resp ? resp : "(null)");
-                if (resp) free(resp);
-                // Show result for a few seconds
-                u64 diag_start = osGetTime();
-                while (aptMainLoop() && osGetTime() - diag_start < 5000) {
-                    hidScanInput();
-                    if (hidKeysDown()) break;
-                    cog_render_frame_begin(&render);
-                    cog_render_target_top(&render, THEME_BG_DARK);
-                    cog_render_text(&render, "POST Diagnostic", 120, 30, THEME_FONT_HEADER, THEME_GOLD);
-                    cog_render_text(&render, diag, 12, 80, THEME_FONT_FOOTER, THEME_TEXT_PRIMARY);
-                    cog_render_text(&render, "Press any button", 120, 200, THEME_FONT_FOOTER, THEME_TEXT_DIMMED);
-                    cog_render_target_bottom(&render, THEME_BG_CANVAS);
-                    cog_render_frame_end(&render);
-                }
-            }
             if (sd & KEY_X) {
                 char scanned[COG_URL_MAX] = {0};
                 if (cog_qr_scan(&render, scanned, sizeof(scanned))) {
