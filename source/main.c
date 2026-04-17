@@ -912,10 +912,19 @@ setup:
                     }
                     break;
                 }
-                case ACTION_DELETE_NOTE:
-                    // Will be implemented in Task 10 with POST workaround
-                    strncpy(status_msg, "Delete not yet available", sizeof(status_msg));
+                case ACTION_DELETE_NOTE: {
+                    if (state.info_count > 0) {
+                        char del_url[512];
+                        snprintf(del_url, sizeof(del_url),
+                                 "%sinfo/%s/delete", url, state.infos[0].id);
+                        char *resp = NULL; size_t rlen = 0;
+                        cog_http_post_json(del_url, "{}", &resp, &rlen);
+                        if (resp) free(resp);
+                        strncpy(status_msg, "Note deleted!", sizeof(status_msg));
+                        last_poll_frame = 0;
+                    }
                     break;
+                }
                 case ACTION_SPAWN:
                 case ACTION_NONE:
                     break;
