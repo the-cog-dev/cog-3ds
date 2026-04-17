@@ -44,6 +44,12 @@ static const MenuItem INFO_ITEMS[] = {
 };
 static const int INFO_ITEM_COUNT = 2;
 
+static const MenuItem SCHEDULE_ITEMS[] = {
+    { "Pause",  ACTION_PAUSE_SCHEDULE  },
+    { "Resume", ACTION_RESUME_SCHEDULE },
+};
+static const int SCHEDULE_ITEM_COUNT = 2;
+
 static const MenuItem NONE_ITEMS[] = {
     { "Spawn Agent", ACTION_SPAWN },
 };
@@ -55,6 +61,7 @@ static const char *card_type_label(CardType t) {
         case CARD_TYPE_AGENT:    return "Agent";
         case CARD_TYPE_PINBOARD: return "Pinboard";
         case CARD_TYPE_INFO:     return "Info";
+        case CARD_TYPE_SCHEDULE: return "Schedule";
         case CARD_TYPE_NONE:     return "Canvas";
         default:                 return "";
     }
@@ -75,6 +82,10 @@ static void get_items(CardType t,
         case CARD_TYPE_INFO:
             *items_out = INFO_ITEMS;
             *count_out = INFO_ITEM_COUNT;
+            break;
+        case CARD_TYPE_SCHEDULE:
+            *items_out = SCHEDULE_ITEMS;
+            *count_out = SCHEDULE_ITEM_COUNT;
             break;
         case CARD_TYPE_NONE:
         default:

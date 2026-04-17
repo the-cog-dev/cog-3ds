@@ -14,6 +14,7 @@ void detail_draw(CogRender *r, const char *project_name,
                  int connection_count,
                  const void *tasks, int task_count,
                  const void *infos, int info_count,
+                 const void *schedules, int schedule_count,
                  int detail_scroll);
 
 #endif

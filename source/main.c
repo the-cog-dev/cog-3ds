@@ -74,6 +74,16 @@ typedef struct {
     char tags[128];
 } InfoInfo;
 
+#define MAX_SCHEDULES 16
+
+typedef struct {
+    char id[64];
+    char name[128];
+    char agent_name[64];
+    int interval_minutes;
+    char status[16];      // "active", "paused", "expired"
+} ScheduleInfo;
+
 typedef struct {
     char project_name[64];
     AgentInfo agents[MAX_AGENTS];
@@ -85,6 +95,8 @@ typedef struct {
     InfoInfo infos[MAX_INFO];
     int info_count;
     SpawnPresetList presets;
+    ScheduleInfo schedules[MAX_SCHEDULES];
+    int schedule_count;
 } CogState;
 
 static const char *STATUS_COLOR_CODE(const char *status) {
@@ -239,6 +251,24 @@ static bool parse_state(const char *json_text, CogState *out) {
             }
             if (sp->agent_count == 0) sp->agent_count = ai;
             out->presets.count++;
+        }
+    }
+
+    // Schedules
+    out->schedule_count = 0;
+    cJSON *scheds = cJSON_GetObjectItemCaseSensitive(root, "schedules");
+    if (cJSON_IsArray(scheds)) {
+        cJSON *sched = NULL;
+        cJSON_ArrayForEach(sched, scheds) {
+            if (out->schedule_count >= MAX_SCHEDULES) break;
+            ScheduleInfo *si = &out->schedules[out->schedule_count];
+            json_get_string(sched, "id", si->id, sizeof(si->id));
+            json_get_string(sched, "name", si->name, sizeof(si->name));
+            json_get_string(sched, "agentName", si->agent_name, sizeof(si->agent_name));
+            cJSON *intv = cJSON_GetObjectItemCaseSensitive(sched, "intervalMinutes");
+            si->interval_minutes = cJSON_IsNumber(intv) ? intv->valueint : 0;
+            json_get_string(sched, "status", si->status, sizeof(si->status));
+            out->schedule_count++;
         }
     }
 
@@ -713,7 +743,7 @@ setup:
         // D-pad scroll for panel detail views
         if (canvas.selected_idx >= 0 && canvas.selected_idx < canvas.card_count) {
             Card *sc = &canvas.cards[canvas.selected_idx];
-            if (sc->card_type == CARD_TYPE_PINBOARD_CARD || sc->card_type == CARD_TYPE_INFO_CARD) {
+            if (sc->card_type == CARD_TYPE_PINBOARD_CARD || sc->card_type == CARD_TYPE_INFO_CARD || sc->card_type == CARD_TYPE_SCHEDULE_CARD) {
                 if (down & KEY_DUP && detail_scroll > 0) detail_scroll--;
                 if (down & KEY_DDOWN) detail_scroll++;
             }
@@ -725,6 +755,7 @@ setup:
                 CardType ct;
                 if (sel_card->card_type == CARD_TYPE_PINBOARD_CARD) ct = CARD_TYPE_PINBOARD;
                 else if (sel_card->card_type == CARD_TYPE_INFO_CARD) ct = CARD_TYPE_INFO;
+                else if (sel_card->card_type == CARD_TYPE_SCHEDULE_CARD) ct = CARD_TYPE_SCHEDULE;
                 else ct = CARD_TYPE_AGENT;
 
                 MenuAction action = cog_action_menu(&render, ct, sel_card->name);
@@ -937,6 +968,30 @@ setup:
                     }
                     break;
                 }
+                case ACTION_PAUSE_SCHEDULE: {
+                    if (state.schedule_count > 0) {
+                        char sched_url[512];
+                        snprintf(sched_url, sizeof(sched_url), "%sschedule/%s/pause", url, state.schedules[0].id);
+                        char *resp = NULL; size_t rlen = 0;
+                        int sc = cog_http_post_json(sched_url, "{}", &resp, &rlen);
+                        if (resp) free(resp);
+                        snprintf(status_msg, sizeof(status_msg), sc == 200 ? "Paused!" : "Failed (HTTP %d)", sc);
+                        last_poll_frame = 0;
+                    }
+                    break;
+                }
+                case ACTION_RESUME_SCHEDULE: {
+                    if (state.schedule_count > 0) {
+                        char sched_url[512];
+                        snprintf(sched_url, sizeof(sched_url), "%sschedule/%s/resume", url, state.schedules[0].id);
+                        char *resp = NULL; size_t rlen = 0;
+                        int sc = cog_http_post_json(sched_url, "{}", &resp, &rlen);
+                        if (resp) free(resp);
+                        snprintf(status_msg, sizeof(status_msg), sc == 200 ? "Resumed!" : "Failed (HTTP %d)", sc);
+                        last_poll_frame = 0;
+                    }
+                    break;
+                }
                 case ACTION_SPAWN:
                 case ACTION_NONE:
                     break;
@@ -1045,8 +1100,7 @@ setup:
                         }
                     }
                     sync_canvas_from_state(&canvas, &state);
-                    // Panel cards removed — they should mirror desktop panel
-                    // visibility, not be permanent. TODO: add panel state to /state.
+                    canvas_add_panel_cards(&canvas, state.task_count, state.info_count, state.schedule_count);
                     if (selected >= state.agent_count) selected = state.agent_count - 1;
                     if (selected < 0) selected = 0;
                     snprintf(status_msg, sizeof(status_msg), "OK (%zu bytes)", poll_body_len);
@@ -1080,6 +1134,7 @@ setup:
                         state.agent_count, state.connection_count,
                         state.tasks, state.task_count,
                         state.infos, state.info_count,
+                        state.schedules, state.schedule_count,
                         detail_scroll);
             cog_render_target_bottom(&render, THEME_BG_CANVAS);
             canvas_draw(&render, &canvas);

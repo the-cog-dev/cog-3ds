@@ -13,6 +13,8 @@ typedef struct { char id[64]; char title[128]; char description[256];
                  char created_by[64]; char claimed_by[64]; } DetailTask;
 typedef struct { char id[64]; char from[64]; char note[256];
                  char tags[128]; } DetailInfo;
+typedef struct { char id[64]; char name[128]; char agent_name[64];
+                 int interval_minutes; char status[16]; } DetailSchedule;
 
 static void draw_header(CogRender *r, const char *project_name,
                         int agent_count, int connection_count) {
@@ -153,11 +155,57 @@ static void draw_info_body(CogRender *r, const void *infos, int info_count,
     }
 }
 
+static void draw_schedule_body(CogRender *r, const void *schedules, int schedule_count,
+                               int detail_scroll) {
+    float y = HEADER_H + 8;
+    cog_render_text(r, "Schedules", 12, y, THEME_FONT_HEADER, THEME_GOLD);
+    y += 28;
+    char summary[32];
+    snprintf(summary, sizeof(summary), "%d schedules", schedule_count);
+    cog_render_text(r, summary, 12, y, THEME_FONT_LABEL, THEME_TEXT_DIMMED);
+    y += 20;
+    cog_render_rect(12, y, TOP_W - 24, 1, THEME_DIVIDER);
+    y += 8;
+
+    const DetailSchedule *s = (const DetailSchedule *)schedules;
+    int visible_start = detail_scroll;
+    int row_h = 34;
+    float body_bottom = TOP_H - FOOTER_H - 4;
+
+    for (int i = visible_start; i < schedule_count && y + row_h <= body_bottom; i++) {
+        // Status color
+        u32 status_color = THEME_TEXT_DIMMED;
+        if (strcmp(s[i].status, "active") == 0)
+            status_color = THEME_STATUS_ACTIVE;
+        else if (strcmp(s[i].status, "paused") == 0)
+            status_color = THEME_GOLD;
+        else if (strcmp(s[i].status, "expired") == 0)
+            status_color = THEME_STATUS_DISCONNECTED;
+
+        // Name + interval
+        char line[256];
+        snprintf(line, sizeof(line), "%s  (every %dm)", s[i].name, s[i].interval_minutes);
+        if (strlen(line) > 55) { line[52] = '.'; line[53] = '.'; line[54] = '.'; line[55] = '\0'; }
+        cog_render_text(r, line, 12, y, THEME_FONT_LABEL, THEME_TEXT_PRIMARY);
+
+        // Agent + status on second line
+        char line2[128];
+        snprintf(line2, sizeof(line2), "%s  [%s]", s[i].agent_name, s[i].status);
+        cog_render_text(r, line2, 12, y + 14, THEME_FONT_FOOTER, status_color);
+        y += row_h;
+    }
+
+    if (schedule_count == 0) {
+        cog_render_text(r, "(no schedules)", 12, y, THEME_FONT_FOOTER, THEME_TEXT_DIMMED);
+    }
+}
+
 void detail_draw(CogRender *r, const char *project_name,
                  const Card *card_or_null, int agent_count,
                  int connection_count,
                  const void *tasks, int task_count,
                  const void *infos, int info_count,
+                 const void *schedules, int schedule_count,
                  int detail_scroll) {
     draw_header(r, project_name, agent_count, connection_count);
     if (card_or_null) {
@@ -165,6 +213,8 @@ void detail_draw(CogRender *r, const char *project_name,
             draw_pinboard_body(r, tasks, task_count, detail_scroll);
         } else if (card_or_null->card_type == CARD_TYPE_INFO_CARD) {
             draw_info_body(r, infos, info_count, detail_scroll);
+        } else if (card_or_null->card_type == CARD_TYPE_SCHEDULE_CARD) {
+            draw_schedule_body(r, schedules, schedule_count, detail_scroll);
         } else {
             draw_body(r, card_or_null);
         }

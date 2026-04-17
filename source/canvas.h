@@ -10,7 +10,7 @@
 
 #include "card.h"
 
-#define CANVAS_MAX_CARDS 34
+#define CANVAS_MAX_CARDS 35
 #define CANVAS_SCREEN_W  320
 #define CANVAS_SCREEN_H  240
 #define CANVAS_ZOOM_MIN  0.3f
@@ -60,6 +60,6 @@ void canvas_frame_all(Canvas *cv);
 typedef enum { CANVAS_NAV_UP, CANVAS_NAV_DOWN, CANVAS_NAV_LEFT, CANVAS_NAV_RIGHT } CanvasNavDir;
 int canvas_nav_nearest(const Canvas *cv, CanvasNavDir dir);
 
-void canvas_add_panel_cards(Canvas *cv, int task_count, int info_count);
+void canvas_add_panel_cards(Canvas *cv, int task_count, int info_count, int schedule_count);
 
 #endif
