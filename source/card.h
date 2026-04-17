@@ -11,6 +11,12 @@
 #include "render.h"
 #include <stdbool.h>
 
+typedef enum {
+    CARD_TYPE_AGENT_CARD,
+    CARD_TYPE_PINBOARD_CARD,
+    CARD_TYPE_INFO_CARD
+} CardTypeEnum;
+
 typedef struct {
     // From /state
     char id[64];
@@ -28,6 +34,8 @@ typedef struct {
     float enter_alpha;  // 0..1, fades in when card first appears
     bool selected;
     bool lifted;
+    CardTypeEnum card_type;
+    bool draggable;
 } Card;
 
 // Default card size when /state doesn't provide one.

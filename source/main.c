@@ -312,6 +312,8 @@ static void sync_canvas_from_state(Canvas *cv, const CogState *state) {
         c->enter_alpha = 1.0f;
         c->selected = false;
         c->lifted = false;
+        c->card_type = CARD_TYPE_AGENT_CARD;
+        c->draggable = true;
 
         if (prev_selected[0] && strcmp(prev_selected, c->id) == 0) {
             cv->selected_idx = i;
@@ -500,6 +502,7 @@ int main(void) {
     u32 last_poll_frame = 0;
     u32 frame = 0;
     bool dirty = true;
+    int detail_scroll = 0;
     char status_msg[128] = "Polling...";
 
     // Setup screen — shows on every boot. If a saved URL exists, auto-
@@ -676,7 +679,7 @@ setup:
                 int dy = touch.py - prev_touch.py;
 
                 // Check for long-press lift trigger
-                if (canvas.lifted_idx < 0 && canvas.selected_idx >= 0 && !did_pan) {
+                if (canvas.lifted_idx < 0 && canvas.selected_idx >= 0 && !did_pan && canvas.cards[canvas.selected_idx].draggable) {
                     u64 now = osGetTime();
                     if (now - touch_start_ms >= LIFT_THRESHOLD_MS) {
                         canvas.lifted_idx = canvas.selected_idx;
@@ -741,13 +744,187 @@ setup:
                     canvas.cards[canvas.selected_idx].selected = false;
                 canvas.selected_idx = ni;
                 canvas.cards[ni].selected = true;
+                detail_scroll = 0;
             }
         }
 
-        // Force re-poll on A
+        // D-pad scroll for panel detail views
+        if (canvas.selected_idx >= 0 && canvas.selected_idx < canvas.card_count) {
+            Card *sc = &canvas.cards[canvas.selected_idx];
+            if (sc->card_type == CARD_TYPE_PINBOARD_CARD || sc->card_type == CARD_TYPE_INFO_CARD) {
+                if (down & KEY_DUP && detail_scroll > 0) detail_scroll--;
+                if (down & KEY_DDOWN) detail_scroll++;
+            }
+        }
+
         if (down & KEY_A) {
-            last_poll_frame = 0;
-            strncpy(status_msg, "Refreshing...", sizeof(status_msg));
+            if (canvas.selected_idx >= 0 && canvas.selected_idx < canvas.card_count) {
+                Card *sel_card = &canvas.cards[canvas.selected_idx];
+                CardType ct;
+                if (sel_card->card_type == CARD_TYPE_PINBOARD_CARD) ct = CARD_TYPE_PINBOARD;
+                else if (sel_card->card_type == CARD_TYPE_INFO_CARD) ct = CARD_TYPE_INFO;
+                else ct = CARD_TYPE_AGENT;
+
+                MenuAction action = cog_action_menu(&render, ct, sel_card->name);
+
+                switch (action) {
+                case ACTION_MESSAGE: {
+                    char prompt[128];
+                    snprintf(prompt, sizeof(prompt), "Message to: %s", sel_card->name);
+                    ComposerResult msg = cog_composer_run(&render, prompt, NULL);
+                    if (msg.submitted && msg.text[0]) {
+                        char msg_url[512];
+                        snprintf(msg_url, sizeof(msg_url), "%smessage", url);
+                        char body[COMPOSER_MAX_LEN + 128];
+                        char escaped[COMPOSER_MAX_LEN];
+                        int ei = 0;
+                        for (int i = 0; msg.text[i] && ei < COMPOSER_MAX_LEN - 2; i++) {
+                            if (msg.text[i] == '"' || msg.text[i] == '\\') escaped[ei++] = '\\';
+                            if (msg.text[i] == '\n') { escaped[ei++] = '\\'; escaped[ei++] = 'n'; continue; }
+                            escaped[ei++] = msg.text[i];
+                        }
+                        escaped[ei] = '\0';
+                        snprintf(body, sizeof(body), "{\"to\":\"%s\",\"text\":\"%s\"}", sel_card->name, escaped);
+                        char *resp = NULL; size_t rlen = 0;
+                        cog_http_post_json(msg_url, body, &resp, &rlen);
+                        if (resp) free(resp);
+                        strncpy(status_msg, "Message sent!", sizeof(status_msg));
+                    }
+                    break;
+                }
+                case ACTION_VIEW_OUTPUT:
+                    cog_output_viewer(&render, url, sel_card->id, sel_card->name);
+                    break;
+                case ACTION_KILL: {
+                    bool confirmed = false;
+                    while (aptMainLoop()) {
+                        hidScanInput();
+                        u32 ckd = hidKeysDown();
+                        if (ckd & KEY_A) { confirmed = true; break; }
+                        if (ckd & KEY_B) break;
+                        cog_render_frame_begin(&render);
+                        cog_render_target_top(&render, THEME_BG_DARK);
+                        char kmsg[128];
+                        snprintf(kmsg, sizeof(kmsg), "Kill %s?", sel_card->name);
+                        cog_render_text(&render, kmsg, 120, 80, THEME_FONT_HEADER, THEME_STATUS_DISCONNECTED);
+                        cog_render_text(&render, "[A] yes  [B] no", 130, 130, THEME_FONT_LABEL, THEME_TEXT_DIMMED);
+                        cog_render_target_bottom(&render, THEME_BG_CANVAS);
+                        cog_render_frame_end(&render);
+                    }
+                    if (confirmed) {
+                        char kill_url[512];
+                        snprintf(kill_url, sizeof(kill_url), "%sworkshop/kill/%s", url, sel_card->id);
+                        char *resp = NULL; size_t rlen = 0;
+                        cog_http_post_json(kill_url, "{}", &resp, &rlen);
+                        if (resp) free(resp);
+                        strncpy(status_msg, "Agent killed", sizeof(status_msg));
+                        last_poll_frame = 0;
+                    }
+                    break;
+                }
+                case ACTION_CREATE_TASK: {
+                    ComposerResult title = cog_composer_run(&render, "Task title:", NULL);
+                    if (title.submitted && title.text[0]) {
+                        ComposerResult desc = cog_composer_run(&render, "Task description:", NULL);
+                        if (desc.submitted) {
+                            char task_url[512];
+                            snprintf(task_url, sizeof(task_url), "%stask", url);
+                            char body[1024];
+                            snprintf(body, sizeof(body),
+                                     "{\"title\":\"%s\",\"description\":\"%s\",\"priority\":\"medium\"}",
+                                     title.text, desc.text);
+                            char *resp = NULL; size_t rlen = 0;
+                            cog_http_post_json(task_url, body, &resp, &rlen);
+                            if (resp) free(resp);
+                            strncpy(status_msg, "Task created!", sizeof(status_msg));
+                            last_poll_frame = 0;
+                        }
+                    }
+                    break;
+                }
+                case ACTION_CLAIM_TASK: {
+                    for (int i = 0; i < state.task_count; i++) {
+                        if (strcmp(state.tasks[i].status, "open") == 0) {
+                            char claim_url[512];
+                            snprintf(claim_url, sizeof(claim_url),
+                                     "%spinboard/tasks/%s/claim", url, state.tasks[i].id);
+                            char *resp = NULL; size_t rlen = 0;
+                            cog_http_post_json(claim_url, "{\"from\":\"3ds-user\"}", &resp, &rlen);
+                            if (resp) free(resp);
+                            strncpy(status_msg, "Task claimed!", sizeof(status_msg));
+                            last_poll_frame = 0;
+                            break;
+                        }
+                    }
+                    break;
+                }
+                case ACTION_COMPLETE_TASK: {
+                    ComposerResult result_text = cog_composer_run(&render, "Result:", NULL);
+                    if (result_text.submitted) {
+                        for (int i = 0; i < state.task_count; i++) {
+                            if (strcmp(state.tasks[i].status, "in_progress") == 0) {
+                                char comp_url[512];
+                                snprintf(comp_url, sizeof(comp_url),
+                                         "%spinboard/tasks/%s/complete", url, state.tasks[i].id);
+                                char body[1024];
+                                snprintf(body, sizeof(body),
+                                         "{\"from\":\"3ds-user\",\"result\":\"%s\"}", result_text.text);
+                                char *resp = NULL; size_t rlen = 0;
+                                cog_http_post_json(comp_url, body, &resp, &rlen);
+                                if (resp) free(resp);
+                                strncpy(status_msg, "Task completed!", sizeof(status_msg));
+                                last_poll_frame = 0;
+                                break;
+                            }
+                        }
+                    }
+                    break;
+                }
+                case ACTION_ABANDON_TASK: {
+                    for (int i = 0; i < state.task_count; i++) {
+                        if (strcmp(state.tasks[i].status, "in_progress") == 0) {
+                            char abn_url[512];
+                            snprintf(abn_url, sizeof(abn_url),
+                                     "%spinboard/tasks/%s/abandon", url, state.tasks[i].id);
+                            char *resp = NULL; size_t rlen = 0;
+                            cog_http_post_json(abn_url, "{}", &resp, &rlen);
+                            if (resp) free(resp);
+                            strncpy(status_msg, "Task abandoned", sizeof(status_msg));
+                            last_poll_frame = 0;
+                            break;
+                        }
+                    }
+                    break;
+                }
+                case ACTION_CREATE_NOTE: {
+                    ComposerResult note = cog_composer_run(&render, "Info note:", NULL);
+                    if (note.submitted && note.text[0]) {
+                        char info_url[512];
+                        snprintf(info_url, sizeof(info_url), "%sinfo", url);
+                        char body[1024];
+                        snprintf(body, sizeof(body),
+                                 "{\"from\":\"3ds-user\",\"note\":\"%s\"}", note.text);
+                        char *resp = NULL; size_t rlen = 0;
+                        cog_http_post_json(info_url, body, &resp, &rlen);
+                        if (resp) free(resp);
+                        strncpy(status_msg, "Note posted!", sizeof(status_msg));
+                        last_poll_frame = 0;
+                    }
+                    break;
+                }
+                case ACTION_DELETE_NOTE:
+                    // Will be implemented in Task 10 with POST workaround
+                    strncpy(status_msg, "Delete not yet available", sizeof(status_msg));
+                    break;
+                case ACTION_SPAWN:
+                case ACTION_NONE:
+                    break;
+                }
+            } else {
+                // Nothing selected — spawn picker
+                cog_spawn_picker(&render, &state.presets, url);
+                last_poll_frame = 0;
+            }
         }
 
         if (down & KEY_L) canvas_zoom(&canvas, -CANVAS_ZOOM_STEP);
@@ -835,6 +1012,7 @@ setup:
             if (poll_code == 200 && poll_body) {
                 if (parse_state(poll_body, &state)) {
                     sync_canvas_from_state(&canvas, &state);
+                    canvas_add_panel_cards(&canvas, state.task_count, state.info_count);
                     if (selected >= state.agent_count) selected = state.agent_count - 1;
                     if (selected < 0) selected = 0;
                     snprintf(status_msg, sizeof(status_msg), "OK (%zu bytes)", poll_body_len);
@@ -865,7 +1043,10 @@ setup:
             cog_render_frame_begin(&render);
             cog_render_target_top(&render, THEME_BG_DARK);
             detail_draw(&render, state.project_name, selected,
-                        state.agent_count, state.connection_count);
+                        state.agent_count, state.connection_count,
+                        state.tasks, state.task_count,
+                        state.infos, state.info_count,
+                        detail_scroll);
             cog_render_target_bottom(&render, THEME_BG_CANVAS);
             canvas_draw(&render, &canvas);
             // Status bar at bottom of canvas

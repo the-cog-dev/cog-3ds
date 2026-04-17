@@ -19,6 +19,18 @@ void card_draw(CogRender *r, const Card *c, float sx, float sy,
     float sw = c->width * world_to_screen_scale * c->lift_scale;
     float sh = c->height * world_to_screen_scale * c->lift_scale;
 
+    if (c->card_type == CARD_TYPE_PINBOARD_CARD ||
+        c->card_type == CARD_TYPE_INFO_CARD) {
+        u32 bg = 0xcc333333;
+        cog_render_rounded_rect(sx, sy, sw, sh, 4.0f, bg);
+        cog_render_rect_outline(sx + 1, sy + 1, sw - 2, sh - 2, 1.0f, THEME_GOLD_DIM);
+        const char *icon = (c->card_type == CARD_TYPE_PINBOARD_CARD) ? "Pinboard" : "Info";
+        cog_render_text(r, icon, sx + 6, sy + 4, THEME_FONT_CARD, THEME_GOLD);
+        cog_render_text(r, c->cli, sx + 6, sy + 20, THEME_FONT_FOOTER, THEME_TEXT_DIMMED);
+        if (c->selected) card_draw_selection_ring(sx, sy, sw, sh);
+        return;
+    }
+
     // Lift glow (if lifted)
     if (c->lift_scale > 1.0f) {
         card_draw_lift_glow(sx, sy, sw, sh);

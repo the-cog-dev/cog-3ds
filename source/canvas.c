@@ -118,3 +118,52 @@ int canvas_nav_nearest(const Canvas *cv, CanvasNavDir dir) {
     }
     return best;
 }
+
+void canvas_add_panel_cards(Canvas *cv, int task_count, int info_count) {
+    float max_x = 0;
+    float max_y = 0;
+    for (int i = 0; i < cv->card_count; i++) {
+        float right = cv->cards[i].x + cv->cards[i].width;
+        if (right > max_x) max_x = right;
+        if (cv->cards[i].y > max_y) max_y = cv->cards[i].y;
+    }
+    float panel_x = max_x + 40;
+
+    if (cv->card_count < CANVAS_MAX_CARDS) {
+        Card *pb = &cv->cards[cv->card_count];
+        memset(pb, 0, sizeof(*pb));
+        strncpy(pb->id, "__pinboard__", sizeof(pb->id) - 1);
+        strncpy(pb->name, "Pinboard", sizeof(pb->name) - 1);
+        char cs[16]; snprintf(cs, sizeof(cs), "%d tasks", task_count);
+        strncpy(pb->cli, cs, sizeof(pb->cli) - 1);
+        pb->x = panel_x;
+        pb->y = max_y > 0 ? max_y : 0;
+        pb->width = CARD_DEFAULT_WIDTH;
+        pb->height = CARD_DEFAULT_HEIGHT;
+        pb->color = 0xff333333;
+        pb->lift_scale = 1.0f;
+        pb->enter_alpha = 1.0f;
+        pb->card_type = CARD_TYPE_PINBOARD_CARD;
+        pb->draggable = false;
+        cv->card_count++;
+    }
+
+    if (cv->card_count < CANVAS_MAX_CARDS) {
+        Card *inf = &cv->cards[cv->card_count];
+        memset(inf, 0, sizeof(*inf));
+        strncpy(inf->id, "__info__", sizeof(inf->id) - 1);
+        strncpy(inf->name, "Info", sizeof(inf->name) - 1);
+        char cs[16]; snprintf(cs, sizeof(cs), "%d notes", info_count);
+        strncpy(inf->cli, cs, sizeof(inf->cli) - 1);
+        inf->x = panel_x;
+        inf->y = (max_y > 0 ? max_y : 0) + CARD_DEFAULT_HEIGHT + 10;
+        inf->width = CARD_DEFAULT_WIDTH;
+        inf->height = CARD_DEFAULT_HEIGHT;
+        inf->color = 0xff333333;
+        inf->lift_scale = 1.0f;
+        inf->enter_alpha = 1.0f;
+        inf->card_type = CARD_TYPE_INFO_CARD;
+        inf->draggable = false;
+        cv->card_count++;
+    }
+}

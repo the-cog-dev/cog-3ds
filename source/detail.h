@@ -11,6 +11,9 @@
 // or NULL for the empty state. project_name shows in the header.
 void detail_draw(CogRender *r, const char *project_name,
                  const Card *card_or_null, int agent_count,
-                 int connection_count);
+                 int connection_count,
+                 const void *tasks, int task_count,
+                 const void *infos, int info_count,
+                 int detail_scroll);
 
 #endif
