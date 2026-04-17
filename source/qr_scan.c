@@ -73,18 +73,27 @@ static bool resolve_short_link(const char *scanned, char *out_url, size_t out_si
     free(body);
     if (!root) return false;
 
-    // Prefer LAN (HTTP, works now) over tunnel (HTTPS, Phase 4)
-    const char *url = NULL;
+    // Prefer LAN (HTTP, direct connection) over tunnel.
+    // If only tunnel (HTTPS) is available, use the Worker as an
+    // HTTP-to-HTTPS proxy: http://3ds.thecog.dev/p/CODE/
+    // so the 3DS never needs to speak HTTPS itself.
     cJSON *lan = cJSON_GetObjectItemCaseSensitive(root, "lan");
     cJSON *tunnel = cJSON_GetObjectItemCaseSensitive(root, "tunnel");
-    if (cJSON_IsString(lan) && lan->valuestring[0]) url = lan->valuestring;
-    else if (cJSON_IsString(tunnel) && tunnel->valuestring[0]) url = tunnel->valuestring;
 
     bool ok = false;
-    if (url) {
-        strncpy(out_url, url, out_size - 1);
+    if (cJSON_IsString(lan) && lan->valuestring[0]) {
+        // LAN available — use directly (HTTP, fast)
+        strncpy(out_url, lan->valuestring, out_size - 1);
         out_url[out_size - 1] = '\0';
         ok = true;
+    } else if (cJSON_IsString(tunnel) && tunnel->valuestring[0]) {
+        // No LAN — build proxy URL from the short code
+        // Extract code from scanned URL: "http://3ds.thecog.dev/XXXXXXXX"
+        const char *code_start = strrchr(scanned, '/');
+        if (code_start && code_start[1]) {
+            snprintf(out_url, out_size, "http://3ds.thecog.dev/p/%s/", code_start + 1);
+            ok = true;
+        }
     }
     cJSON_Delete(root);
     return ok;
