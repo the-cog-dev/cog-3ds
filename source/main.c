@@ -34,6 +34,11 @@
 #include "qr_scan.h"
 #include "net_recv.h"
 #include "keyboard.h"
+#include "pin.h"
+#include "action_menu.h"
+#include "composer.h"
+#include "output_viewer.h"
+#include "spawn.h"
 
 #define MAX_AGENTS 32
 
@@ -49,11 +54,37 @@ typedef struct {
     u32 color_rgba;   // citro2d native
 } AgentInfo;
 
+#define MAX_TASKS 32
+#define MAX_INFO  32
+
+typedef struct {
+    char id[64];
+    char title[128];
+    char description[256];
+    char priority[8];     // "low", "medium", "high"
+    char status[16];      // "open", "in_progress", "completed"
+    char created_by[64];
+    char claimed_by[64];
+} TaskInfo;
+
+typedef struct {
+    char id[64];
+    char from[64];
+    char note[256];
+    char tags[128];
+} InfoInfo;
+
 typedef struct {
     char project_name[64];
     AgentInfo agents[MAX_AGENTS];
     int agent_count;
     int connection_count;
+    bool workshop_passcode_set;
+    TaskInfo tasks[MAX_TASKS];
+    int task_count;
+    InfoInfo infos[MAX_INFO];
+    int info_count;
+    SpawnPresetList presets;
 } CogState;
 
 static const char *STATUS_COLOR_CODE(const char *status) {
@@ -124,6 +155,90 @@ static bool parse_state(const char *json_text, CogState *out) {
             a->height = cJSON_IsNumber(h) ? (float)h->valuedouble : 0.0f;
             a->color_rgba = parse_hex_color(cJSON_IsString(col) ? col->valuestring : NULL);
             out->agent_count++;
+        }
+    }
+
+    // workshopPasscodeSet
+    cJSON *wps = cJSON_GetObjectItemCaseSensitive(root, "workshopPasscodeSet");
+    out->workshop_passcode_set = cJSON_IsBool(wps) && cJSON_IsTrue(wps);
+
+    // Pinboard tasks
+    out->task_count = 0;
+    cJSON *tasks = cJSON_GetObjectItemCaseSensitive(root, "pinboardTasks");
+    if (cJSON_IsArray(tasks)) {
+        cJSON *task = NULL;
+        cJSON_ArrayForEach(task, tasks) {
+            if (out->task_count >= MAX_TASKS) break;
+            TaskInfo *t = &out->tasks[out->task_count];
+            json_get_string(task, "id", t->id, sizeof(t->id));
+            json_get_string(task, "title", t->title, sizeof(t->title));
+            json_get_string(task, "description", t->description, sizeof(t->description));
+            json_get_string(task, "priority", t->priority, sizeof(t->priority));
+            json_get_string(task, "status", t->status, sizeof(t->status));
+            json_get_string(task, "createdBy", t->created_by, sizeof(t->created_by));
+            json_get_string(task, "claimedBy", t->claimed_by, sizeof(t->claimed_by));
+            out->task_count++;
+        }
+    }
+
+    // Info entries
+    out->info_count = 0;
+    cJSON *infos = cJSON_GetObjectItemCaseSensitive(root, "infoEntries");
+    if (cJSON_IsArray(infos)) {
+        cJSON *info = NULL;
+        cJSON_ArrayForEach(info, infos) {
+            if (out->info_count >= MAX_INFO) break;
+            InfoInfo *inf = &out->infos[out->info_count];
+            json_get_string(info, "id", inf->id, sizeof(inf->id));
+            json_get_string(info, "from", inf->from, sizeof(inf->from));
+            json_get_string(info, "note", inf->note, sizeof(inf->note));
+            // Flatten tags array to comma-separated string
+            cJSON *tags_arr = cJSON_GetObjectItemCaseSensitive(info, "tags");
+            inf->tags[0] = '\0';
+            if (cJSON_IsArray(tags_arr)) {
+                int tlen = 0;
+                cJSON *tag = NULL;
+                cJSON_ArrayForEach(tag, tags_arr) {
+                    if (cJSON_IsString(tag) && tag->valuestring) {
+                        int slen = (int)strlen(tag->valuestring);
+                        if (tlen + slen + 2 < (int)sizeof(inf->tags)) {
+                            if (tlen > 0) { inf->tags[tlen++] = ','; inf->tags[tlen++] = ' '; }
+                            memcpy(inf->tags + tlen, tag->valuestring, slen);
+                            tlen += slen;
+                            inf->tags[tlen] = '\0';
+                        }
+                    }
+                }
+            }
+            out->info_count++;
+        }
+    }
+
+    // Presets
+    out->presets.count = 0;
+    cJSON *presets = cJSON_GetObjectItemCaseSensitive(root, "presets");
+    if (cJSON_IsArray(presets)) {
+        cJSON *preset = NULL;
+        cJSON_ArrayForEach(preset, presets) {
+            if (out->presets.count >= SPAWN_MAX_PRESETS) break;
+            SpawnPreset *sp = &out->presets.presets[out->presets.count];
+            json_get_string(preset, "name", sp->name, sizeof(sp->name));
+            cJSON *ac = cJSON_GetObjectItemCaseSensitive(preset, "agentCount");
+            sp->agent_count = cJSON_IsNumber(ac) ? ac->valueint : 0;
+            int ai = 0;
+            cJSON *pagents = cJSON_GetObjectItemCaseSensitive(preset, "agents");
+            if (cJSON_IsArray(pagents)) {
+                cJSON *pa = NULL;
+                cJSON_ArrayForEach(pa, pagents) {
+                    if (ai >= SPAWN_MAX_AGENTS) break;
+                    json_get_string(pa, "name", sp->agents[ai].name, sizeof(sp->agents[ai].name));
+                    json_get_string(pa, "cli", sp->agents[ai].cli, sizeof(sp->agents[ai].cli));
+                    json_get_string(pa, "role", sp->agents[ai].role, sizeof(sp->agents[ai].role));
+                    ai++;
+                }
+            }
+            if (sp->agent_count == 0) sp->agent_count = ai;
+            out->presets.count++;
         }
     }
 
@@ -505,6 +620,34 @@ setup:
         frame = 0;
         dirty = true;
     }
+
+    // ── PIN gate ────────────────────────────────────────────────────────────
+    bool workshop_verified = false;
+    {
+        build_state_url(url, poll_url, sizeof(poll_url));
+        char *init_body = NULL;
+        size_t init_len = 0;
+        int init_code = cog_http_get(poll_url, &init_body, &init_len);
+        if (init_code == 200 && init_body) {
+            if (parse_state(init_body, &state)) {
+                sync_canvas_from_state(&canvas, &state);
+                if (canvas.card_count > 0) canvas_frame_all(&canvas);
+            }
+        }
+        if (init_body) free(init_body);
+
+        if (state.workshop_passcode_set) {
+            PinResult pr = cog_pin_entry(&render, url);
+            if (pr == PIN_RESULT_OK || pr == PIN_RESULT_SKIP) {
+                workshop_verified = true;
+            } else {
+                goto setup;
+            }
+        } else {
+            workshop_verified = true;
+        }
+    }
+    (void)workshop_verified;
 
     while (aptMainLoop()) {
         hidScanInput();
