@@ -171,7 +171,7 @@ static void draw_output(CogRender *r, const OutputState *st,
 // -----------------------------------------------------------------------
 void cog_output_viewer(CogRender *r, const char *base_url,
                        const char *agent_id, const char *agent_name) {
-    OutputState st;
+    static OutputState st;
     memset(&st, 0, sizeof(st));
 
     // Fetch once on entry

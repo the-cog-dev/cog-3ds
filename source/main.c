@@ -748,9 +748,13 @@ setup:
                         escaped[ei] = '\0';
                         snprintf(body, sizeof(body), "{\"to\":\"%s\",\"text\":\"%s\"}", sel_card->name, escaped);
                         char *resp = NULL; size_t rlen = 0;
-                        cog_http_post_json(msg_url, body, &resp, &rlen);
+                        int msg_code = cog_http_post_json(msg_url, body, &resp, &rlen);
                         if (resp) free(resp);
-                        strncpy(status_msg, "Message sent!", sizeof(status_msg));
+                        if (msg_code == 200) {
+                            strncpy(status_msg, "Message sent!", sizeof(status_msg));
+                        } else {
+                            snprintf(status_msg, sizeof(status_msg), "Send failed (HTTP %d)", msg_code);
+                        }
                     }
                     break;
                 }
@@ -995,7 +999,8 @@ setup:
                         }
                     }
                     sync_canvas_from_state(&canvas, &state);
-                    canvas_add_panel_cards(&canvas, state.task_count, state.info_count);
+                    // Panel cards removed — they should mirror desktop panel
+                    // visibility, not be permanent. TODO: add panel state to /state.
                     if (selected >= state.agent_count) selected = state.agent_count - 1;
                     if (selected < 0) selected = 0;
                     snprintf(status_msg, sizeof(status_msg), "OK (%zu bytes)", poll_body_len);
