@@ -506,17 +506,14 @@ int main(void) {
     int detail_scroll = 0;
     char status_msg[128] = "Polling...";
 
-    // Setup screen — shows on every boot. If a saved URL exists, auto-
-    // advances after 3 seconds. User can press A to skip, X to scan a
-    // new QR, or START to exit. SELECT from the main loop returns here.
+    // Setup screen — shows on every boot. User must press A to connect.
+    // SELECT from the main loop returns here.
 setup:
     {
         CogUrlHistory hist;
         cog_config_load_history(&hist);
         int url_sel = 0;  // which URL in history is selected
 
-        u64 setup_start = osGetTime();
-        const u64 AUTO_ADVANCE_MS = 3000;
         bool advanced = false;
         have_url = hist.count > 0;
         if (have_url) {
@@ -538,12 +535,10 @@ setup:
             if (sd & KEY_DUP && url_sel > 0) {
                 url_sel--;
                 strncpy(url, hist.urls[url_sel], sizeof(url) - 1);
-                setup_start = osGetTime();
             }
             if (sd & KEY_DDOWN && url_sel < hist.count - 1) {
                 url_sel++;
                 strncpy(url, hist.urls[url_sel], sizeof(url) - 1);
-                setup_start = osGetTime();
             }
             if (sd & KEY_A && have_url) { advanced = true; break; }
             if (sd & KEY_X) {
@@ -557,7 +552,6 @@ setup:
                         url_sel = 0;
                     }
                 }
-                setup_start = osGetTime();
             }
             if (sd & KEY_L) {
                 char received[COG_URL_MAX] = {0};
@@ -570,7 +564,6 @@ setup:
                         url_sel = 0;
                     }
                 }
-                setup_start = osGetTime();
             }
             if (sd & KEY_Y) {
                 CogKeyboard kb;
@@ -592,25 +585,17 @@ setup:
                         url_sel = 0;
                     }
                 }
-                setup_start = osGetTime();
             }
 
-            u64 elapsed = osGetTime() - setup_start;
-            if (have_url && elapsed >= AUTO_ADVANCE_MS) { advanced = true; break; }
-
-            float remaining = have_url ? (AUTO_ADVANCE_MS - elapsed) / 1000.0f : 0;
             if (use_citro2d) {
-                render_setup_screen(&render, &hist, url_sel, remaining);
+                render_setup_screen(&render, &hist, url_sel, 0);
             } else {
-                if (elapsed < 100) {
-                    consoleSelect(&top);
-                    printf("\x1b[2J\x1b[1;1H\n");
-                    for (int i = 0; i < hist.count; i++) {
-                        printf("  %s %s\n", i == url_sel ? ">" : " ", hist.urls[i]);
-                    }
-                    if (have_url) printf("\n  Auto-connecting in 3s...\n");
-                    else printf("  No URL saved.\n");
+                consoleSelect(&top);
+                printf("\x1b[2J\x1b[1;1H\n");
+                for (int i = 0; i < hist.count; i++) {
+                    printf("  %s %s\n", i == url_sel ? ">" : " ", hist.urls[i]);
                 }
+                if (!have_url) printf("  No URL saved.\n");
                 gspWaitForVBlank();
             }
         }
@@ -625,33 +610,9 @@ setup:
         dirty = true;
     }
 
-    // ── PIN gate ────────────────────────────────────────────────────────────
-    bool workshop_verified = false;
-    {
-        build_state_url(url, poll_url, sizeof(poll_url));
-        char *init_body = NULL;
-        size_t init_len = 0;
-        int init_code = cog_http_get(poll_url, &init_body, &init_len);
-        if (init_code == 200 && init_body) {
-            if (parse_state(init_body, &state)) {
-                sync_canvas_from_state(&canvas, &state);
-                if (canvas.card_count > 0) canvas_frame_all(&canvas);
-            }
-        }
-        if (init_body) free(init_body);
-
-        if (state.workshop_passcode_set) {
-            PinResult pr = cog_pin_entry(&render, url);
-            if (pr == PIN_RESULT_OK || pr == PIN_RESULT_SKIP) {
-                workshop_verified = true;
-            } else {
-                goto setup;
-            }
-        } else {
-            workshop_verified = true;
-        }
-    }
-    (void)workshop_verified;
+    // PIN gate is deferred — checked after first successful async poll
+    // so we never block on a sync HTTP GET here.
+    bool pin_checked = false;
 
     while (aptMainLoop()) {
         hidScanInput();
@@ -1021,6 +982,18 @@ setup:
 
             if (poll_code == 200 && poll_body) {
                 if (parse_state(poll_body, &state)) {
+                    // Deferred PIN check — on first successful poll, check
+                    // if workshop passcode is set and prompt if needed.
+                    if (!pin_checked) {
+                        pin_checked = true;
+                        if (state.workshop_passcode_set) {
+                            free(poll_body); poll_body = NULL;
+                            PinResult pr = cog_pin_entry(&render, url);
+                            if (pr != PIN_RESULT_OK && pr != PIN_RESULT_SKIP) {
+                                goto setup;
+                            }
+                        }
+                    }
                     sync_canvas_from_state(&canvas, &state);
                     canvas_add_panel_cards(&canvas, state.task_count, state.info_count);
                     if (selected >= state.agent_count) selected = state.agent_count - 1;
