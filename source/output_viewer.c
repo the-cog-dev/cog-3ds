@@ -47,8 +47,10 @@ static void fetch_output(OutputState *st, const char *base_url,
     st->scroll = 0;
 
     char url[512];
-    snprintf(url, sizeof(url), "%sworkshop/output/%s?lines=%d",
-             base_url, agent_id, MAX_LINES);
+    // Use the non-workshop output endpoint — doesn't require PIN
+    // verification. /agent/:id/output returns last 50 lines by default.
+    snprintf(url, sizeof(url), "%sagent/%s/output",
+             base_url, agent_id);
 
     char  *body = NULL;
     size_t body_len = 0;
