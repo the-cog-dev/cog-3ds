@@ -815,6 +815,7 @@ setup:
                                             }
                                             if (s[si] == '\x1b') continue;
                                             if ((unsigned char)s[si] < 0x20 && s[si] != '\t') continue;
+                                            if ((unsigned char)s[si] > 0x7E) continue;
                                             d[di++] = s[si];
                                         }
                                         d[di] = '\0';

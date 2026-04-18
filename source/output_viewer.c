@@ -96,7 +96,8 @@ static void fetch_output(OutputState *st, const char *base_url,
                         continue;
                     }
                     if (src[si] == '\x1b') continue; // bare ESC
-                    if ((unsigned char)src[si] < 0x20 && src[si] != '\t') continue; // other control chars
+                    if ((unsigned char)src[si] < 0x20 && src[si] != '\t') continue; // control chars
+                    if ((unsigned char)src[si] > 0x7E) continue; // non-ASCII (Unicode, box-drawing, etc.)
                     dst[di++] = src[si];
                 }
                 dst[di] = '\0';
