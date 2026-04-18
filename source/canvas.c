@@ -95,7 +95,8 @@ void canvas_frame_all(Canvas *cv) {
 
 int canvas_nav_nearest(const Canvas *cv, CanvasNavDir dir) {
     if (cv->card_count == 0) return -1;
-    if (cv->selected_idx < 0) return 0;
+    // Nothing selected — don't auto-select; let the user tap to pick a card first
+    if (cv->selected_idx < 0) return -1;
     const Card *from = &cv->cards[cv->selected_idx];
     float fx = from->x + from->width / 2, fy = from->y + from->height / 2;
     int best = -1;

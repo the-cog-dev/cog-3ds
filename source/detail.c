@@ -7,6 +7,7 @@
 #define TOP_H 240
 #define HEADER_H 28
 #define FOOTER_H 20
+#define MAX_TASKS 32
 
 typedef struct { char id[64]; char title[128]; char description[256];
                  char priority[8]; char status[16];
@@ -34,11 +35,14 @@ static void draw_header(CogRender *r, const char *project_name,
 static void draw_footer(CogRender *r, const Card *card_or_null) {
     float fy = TOP_H - FOOTER_H;
     cog_render_rect(0, fy, TOP_W, 1, THEME_DIVIDER);
-    if (card_or_null) {
+    if (card_or_null && card_or_null->card_type == CARD_TYPE_PINBOARD_CARD) {
+        cog_render_text(r, "[L/R] tabs  [A] actions  [B] deselect  [D-pad] scroll",
+                        12, fy + 4, THEME_FONT_FOOTER, THEME_TEXT_DIMMED);
+    } else if (card_or_null) {
         cog_render_text(r, "[A] actions  [B] deselect  [D-pad] scroll",
                         12, fy + 4, THEME_FONT_FOOTER, THEME_TEXT_DIMMED);
     } else {
-        cog_render_text(r, "[A] spawn  [SELECT] setup  [START] exit",
+        cog_render_text(r, "[A] spawn  [Y] fit  [SELECT] setup  [START] exit",
                         12, fy + 4, THEME_FONT_FOOTER, THEME_TEXT_DIMMED);
     }
 }
@@ -46,7 +50,7 @@ static void draw_footer(CogRender *r, const Card *card_or_null) {
 static void draw_empty_body(CogRender *r) {
     cog_render_text(r, "Tap a card to see details.",
                     12, HEADER_H + 20, THEME_FONT_CARD, THEME_TEXT_DIMMED);
-    cog_render_text(r, "D-pad cycles through agents.",
+    cog_render_text(r, "Circle pad to pan, D-pad to navigate.",
                     12, HEADER_H + 40, THEME_FONT_FOOTER, THEME_TEXT_DIMMED);
 }
 
@@ -75,48 +79,82 @@ static void draw_body(CogRender *r, const Card *c) {
 }
 
 static void draw_pinboard_body(CogRender *r, const void *tasks, int task_count,
-                               int detail_scroll) {
+                               int detail_scroll, int pinboard_tab) {
+    static const char *TAB_NAMES[] = { "Open", "In Progress", "Completed" };
+    static const char *TAB_FILTERS[] = { "open", "in_progress", "completed" };
+    const u32 TAB_COLORS[] = { THEME_TEXT_DIMMED, THEME_STATUS_WORKING, THEME_STATUS_ACTIVE };
+
     float y = HEADER_H + 8;
     cog_render_text(r, "Pinboard", 12, y, THEME_FONT_HEADER, THEME_GOLD);
     y += 28;
-    char summary[32];
-    snprintf(summary, sizeof(summary), "%d tasks", task_count);
-    cog_render_text(r, summary, 12, y, THEME_FONT_LABEL, THEME_TEXT_DIMMED);
-    y += 20;
+
+    // Tab bar
+    float tab_x = 12;
+    for (int t = 0; t < 3; t++) {
+        u32 col = (t == pinboard_tab) ? TAB_COLORS[t] : THEME_DIVIDER;
+        // Count tasks in this tab
+        int cnt = 0;
+        const DetailTask *dt = (const DetailTask *)tasks;
+        for (int i = 0; i < task_count; i++)
+            if (strcmp(dt[i].status, TAB_FILTERS[t]) == 0) cnt++;
+        char label[32];
+        snprintf(label, sizeof(label), "%s (%d)", TAB_NAMES[t], cnt);
+        cog_render_text(r, label, tab_x, y, THEME_FONT_FOOTER, col);
+        tab_x += 130;
+    }
+    y += 18;
+
+    // Underline for active tab
+    float ul_x = 12 + pinboard_tab * 130;
+    cog_render_rect(ul_x, y, 100, 2, TAB_COLORS[pinboard_tab]);
+    y += 6;
     cog_render_rect(12, y, TOP_W - 24, 1, THEME_DIVIDER);
     y += 8;
 
-    const DetailTask *t = (const DetailTask *)tasks;
+    // Filter tasks to current tab
+    const DetailTask *all = (const DetailTask *)tasks;
+    const DetailTask *filtered[MAX_TASKS];
+    int filtered_count = 0;
+    for (int i = 0; i < task_count && filtered_count < MAX_TASKS; i++) {
+        if (strcmp(all[i].status, TAB_FILTERS[pinboard_tab]) == 0)
+            filtered[filtered_count++] = &all[i];
+    }
+
     int visible_start = detail_scroll;
     int row_h = 28;
     float body_bottom = TOP_H - FOOTER_H - 4;
 
-    for (int i = visible_start; i < task_count && y + row_h <= body_bottom; i++) {
-        // Status icon
-        const char *icon = "[ ]";
-        u32 icon_color = THEME_TEXT_DIMMED;
-        if (strcmp(t[i].status, "in_progress") == 0) {
-            icon = "[>]";
-            icon_color = THEME_STATUS_WORKING;
-        } else if (strcmp(t[i].status, "completed") == 0) {
-            icon = "[x]";
-            icon_color = THEME_STATUS_ACTIVE;
-        }
-        cog_render_text(r, icon, 12, y, THEME_FONT_LABEL, icon_color);
-
+    for (int i = visible_start; i < filtered_count && y + row_h <= body_bottom; i++) {
+        const DetailTask *ft = filtered[i];
         // Priority color
         u32 title_color = THEME_TEXT_PRIMARY;
-        if (strcmp(t[i].priority, "high") == 0)
+        if (strcmp(ft->priority, "high") == 0)
             title_color = THEME_STATUS_DISCONNECTED;
-        else if (strcmp(t[i].priority, "low") == 0)
+        else if (strcmp(ft->priority, "low") == 0)
             title_color = THEME_TEXT_DIMMED;
 
-        cog_render_text(r, t[i].title, 46, y, THEME_FONT_LABEL, title_color);
-        y += row_h;
+        // Show claimed_by for in_progress, created_by for open
+        const char *meta = "";
+        if (pinboard_tab == 1 && ft->claimed_by[0])
+            meta = ft->claimed_by;
+        else if (pinboard_tab == 0 && ft->created_by[0])
+            meta = ft->created_by;
+
+        cog_render_text(r, ft->title, 12, y, THEME_FONT_LABEL, title_color);
+        if (meta[0]) {
+            cog_render_text(r, meta, 12, y + 13, THEME_FONT_FOOTER, THEME_TEXT_DIMMED);
+            y += row_h + 6;
+        } else {
+            y += row_h;
+        }
     }
 
-    if (task_count == 0) {
-        cog_render_text(r, "(no tasks)", 12, y, THEME_FONT_FOOTER, THEME_TEXT_DIMMED);
+    if (filtered_count == 0) {
+        const char *empty_msg = "(none)";
+        if (pinboard_tab == 0) empty_msg = "No open tasks";
+        else if (pinboard_tab == 1) empty_msg = "Nothing in progress";
+        else empty_msg = "No completed tasks";
+        cog_render_text(r, empty_msg, 12, y, THEME_FONT_FOOTER, THEME_TEXT_DIMMED);
     }
 }
 
@@ -206,11 +244,11 @@ void detail_draw(CogRender *r, const char *project_name,
                  const void *tasks, int task_count,
                  const void *infos, int info_count,
                  const void *schedules, int schedule_count,
-                 int detail_scroll) {
+                 int detail_scroll, int pinboard_tab) {
     draw_header(r, project_name, agent_count, connection_count);
     if (card_or_null) {
         if (card_or_null->card_type == CARD_TYPE_PINBOARD_CARD) {
-            draw_pinboard_body(r, tasks, task_count, detail_scroll);
+            draw_pinboard_body(r, tasks, task_count, detail_scroll, pinboard_tab);
         } else if (card_or_null->card_type == CARD_TYPE_INFO_CARD) {
             draw_info_body(r, infos, info_count, detail_scroll);
         } else if (card_or_null->card_type == CARD_TYPE_SCHEDULE_CARD) {

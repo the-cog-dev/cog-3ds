@@ -576,11 +576,15 @@ int main(void) {
     u64 lift_start_ms = 0;
     const u64 LIFT_THRESHOLD_MS = 500;
     const u64 LIFT_ANIM_MS = 150;
+    const int PAN_DEADZONE_PX = 6;  // pixels of drag before pan kicks in on a card
+    bool touch_started_on_card = false;
+    int touch_accum_dx = 0, touch_accum_dy = 0;
     int selected = 0;
     u32 last_poll_frame = 0;
     u32 frame = 0;
     bool dirty = true;
     int detail_scroll = 0;
+    int pinboard_tab = 0;  // 0=open, 1=in_progress, 2=completed
     char status_msg[128] = "Polling...";
 
     // Setup screen — shows on every boot. User must press A to connect.
@@ -708,6 +712,9 @@ setup:
                     canvas.cards[hit].selected = true;
                     touch_start_ms = osGetTime();
                     did_pan = false;
+                    touch_started_on_card = true;
+                    touch_accum_dx = 0;
+                    touch_accum_dy = 0;
                 } else {
                     // Tapped empty canvas — deselect current card
                     if (canvas.selected_idx >= 0 && canvas.selected_idx < canvas.card_count)
@@ -715,6 +722,7 @@ setup:
                     canvas.selected_idx = -1;
                     detail_scroll = 0;
                     did_pan = false;
+                    touch_started_on_card = false;
                 }
                 touching = true;
             }
@@ -748,22 +756,39 @@ setup:
                     lc->y += (float)dy / canvas.cam_zoom;
                 }
 
-                // Panning only if not lifted and the initial touch wasn't on a card
-                if (canvas.lifted_idx < 0 &&
-                    (did_pan || canvas_hit_test(&canvas, prev_touch.px, prev_touch.py) < 0)) {
-                    if (dx != 0 || dy != 0) {
+                // Pan logic: always pan on empty canvas. On cards, accumulate
+                // movement and only start panning after exceeding a deadzone so
+                // the long-press lift can still trigger on small jitters.
+                if (canvas.lifted_idx < 0 && (dx != 0 || dy != 0)) {
+                    if (!touch_started_on_card) {
+                        // Touch started on empty space — always pan
                         canvas_pan(&canvas, (float)dx, (float)dy);
                         did_pan = true;
+                    } else if (!did_pan) {
+                        // Touch started on card — accumulate until deadzone exceeded
+                        touch_accum_dx += (dx > 0 ? dx : -dx);
+                        touch_accum_dy += (dy > 0 ? dy : -dy);
+                        if (touch_accum_dx + touch_accum_dy > PAN_DEADZONE_PX) {
+                            did_pan = true;
+                            canvas_pan(&canvas, (float)dx, (float)dy);
+                        }
+                    } else {
+                        // Already panning from a card touch
+                        canvas_pan(&canvas, (float)dx, (float)dy);
                     }
                 }
             }
             prev_touch = touch;
         } else if (touching) {
-            // Touch release — drop lifted card back to 1.0 scale, sync position
+            // Touch release — drop lifted card, snap to 20px grid, sync position
             if (canvas.lifted_idx >= 0 && canvas.lifted_idx < canvas.card_count) {
                 Card *lc = &canvas.cards[canvas.lifted_idx];
                 lc->lifted = false;
                 lc->lift_scale = 1.0f;
+                // Snap to 20px grid (matches desktop workshop snap behavior)
+                float grid = 20.0f;
+                lc->x = ((int)(lc->x / grid + (lc->x >= 0 ? 0.5f : -0.5f))) * grid;
+                lc->y = ((int)(lc->y / grid + (lc->y >= 0 ? 0.5f : -0.5f))) * grid;
                 post_card_position(url, lc);
                 canvas.lifted_idx = -1;
             }
@@ -792,12 +817,24 @@ setup:
             }
         }
 
-        // D-pad scroll for panel detail views
-        if (canvas.selected_idx >= 0 && canvas.selected_idx < canvas.card_count) {
-            Card *sc = &canvas.cards[canvas.selected_idx];
-            if (sc->card_type == CARD_TYPE_PINBOARD_CARD || sc->card_type == CARD_TYPE_INFO_CARD || sc->card_type == CARD_TYPE_SCHEDULE_CARD) {
-                if (down & KEY_DUP && detail_scroll > 0) detail_scroll--;
-                if (down & KEY_DDOWN) detail_scroll++;
+        // D-pad scroll for panel detail views + L/R tab switch for pinboard
+        {
+            bool on_pinboard = false;
+            if (canvas.selected_idx >= 0 && canvas.selected_idx < canvas.card_count) {
+                Card *sc = &canvas.cards[canvas.selected_idx];
+                if (sc->card_type == CARD_TYPE_PINBOARD_CARD) on_pinboard = true;
+                if (sc->card_type == CARD_TYPE_PINBOARD_CARD || sc->card_type == CARD_TYPE_INFO_CARD || sc->card_type == CARD_TYPE_SCHEDULE_CARD) {
+                    if (down & KEY_DUP && detail_scroll > 0) detail_scroll--;
+                    if (down & KEY_DDOWN) detail_scroll++;
+                }
+            }
+            // L/R: tab switch when pinboard selected, zoom otherwise
+            if (on_pinboard) {
+                if (down & KEY_L) { pinboard_tab = (pinboard_tab + 2) % 3; detail_scroll = 0; }
+                if (down & KEY_R) { pinboard_tab = (pinboard_tab + 1) % 3; detail_scroll = 0; }
+            } else {
+                if (down & KEY_L) canvas_zoom(&canvas, -CANVAS_ZOOM_STEP);
+                if (down & KEY_R) canvas_zoom(&canvas, +CANVAS_ZOOM_STEP);
             }
         }
 
@@ -1058,45 +1095,30 @@ setup:
             }
         }
 
-        if (down & KEY_L) canvas_zoom(&canvas, -CANVAS_ZOOM_STEP);
-        if (down & KEY_R) canvas_zoom(&canvas, +CANVAS_ZOOM_STEP);
+        // Circle pad → smooth canvas panning
+        circlePosition cpad;
+        hidCircleRead(&cpad);
+        {
+            int cdx = (cpad.dx > 25 || cpad.dx < -25) ? cpad.dx : 0;
+            int cdy = (cpad.dy > 25 || cpad.dy < -25) ? cpad.dy : 0;
+            if (cdx != 0 || cdy != 0) {
+                canvas_pan(&canvas, (float)cdx * 0.015f, (float)(-cdy) * 0.015f);
+            }
+        }
 
         if (down & KEY_B) {
             if (canvas.selected_idx >= 0 && canvas.selected_idx < canvas.card_count)
                 canvas.cards[canvas.selected_idx].selected = false;
             canvas.selected_idx = -1;
+            pinboard_tab = 0;
         }
 
         // SELECT returns to the setup screen to change URL / rescan QR
         if (down & KEY_SELECT) goto setup;
 
-        // Y shows the configured URL (debug)
+        // Y = fit all cards on screen (re-center + zoom to fit)
         if (down & KEY_Y) {
-            if (use_citro2d) {
-                while (aptMainLoop()) {
-                    hidScanInput();
-                    if (hidKeysDown()) break;
-                    cog_render_frame_begin(&render);
-                    cog_render_target_top(&render, THEME_BG_DARK);
-                    cog_render_text(&render, "Configured URL:", 12, 30, THEME_FONT_HEADER, THEME_GOLD);
-                    cog_render_text(&render, url, 12, 70, THEME_FONT_FOOTER, THEME_TEXT_PRIMARY);
-                    cog_render_text(&render, "Press any button to return.", 12, 200, THEME_FONT_FOOTER, THEME_TEXT_DIMMED);
-                    cog_render_target_bottom(&render, THEME_BG_CANVAS);
-                    cog_render_frame_end(&render);
-                }
-            } else {
-                consoleSelect(&top);
-                printf("\x1b[2J\x1b[1;1H");
-                printf("\n  \x1b[33mConfigured URL:\x1b[0m\n\n  %s\n\n", url);
-                printf("  \x1b[37mPress any button to return.\x1b[0m");
-                while (aptMainLoop()) {
-                    hidScanInput();
-                    u32 d = hidKeysDown();
-                    if (d) break;
-                    gspWaitForVBlank();
-                }
-            }
-            dirty = true;
+            canvas_frame_all(&canvas);
         }
 
         // X rescans a QR code to update the saved URL
@@ -1191,7 +1213,7 @@ setup:
                         state.tasks, state.task_count,
                         state.infos, state.info_count,
                         state.schedules, state.schedule_count,
-                        detail_scroll);
+                        detail_scroll, pinboard_tab);
             cog_render_target_bottom(&render, THEME_BG_CANVAS);
             canvas_draw(&render, &canvas);
             // Status bar at bottom of canvas
