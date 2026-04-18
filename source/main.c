@@ -97,6 +97,9 @@ typedef struct {
     SpawnPresetList presets;
     ScheduleInfo schedules[MAX_SCHEDULES];
     int schedule_count;
+    bool panel_pinboard_open;
+    bool panel_info_open;
+    bool panel_schedules_open;
 } CogState;
 
 static const char *STATUS_COLOR_CODE(const char *status) {
@@ -269,6 +272,22 @@ static bool parse_state(const char *json_text, CogState *out) {
             si->interval_minutes = cJSON_IsNumber(intv) ? intv->valueint : 0;
             json_get_string(sched, "status", si->status, sizeof(si->status));
             out->schedule_count++;
+        }
+    }
+
+    // Open panels
+    out->panel_pinboard_open = false;
+    out->panel_info_open = false;
+    out->panel_schedules_open = false;
+    cJSON *panels = cJSON_GetObjectItemCaseSensitive(root, "openPanels");
+    if (cJSON_IsArray(panels)) {
+        cJSON *p = NULL;
+        cJSON_ArrayForEach(p, panels) {
+            if (cJSON_IsString(p) && p->valuestring) {
+                if (strcmp(p->valuestring, "pinboard") == 0) out->panel_pinboard_open = true;
+                else if (strcmp(p->valuestring, "info") == 0) out->panel_info_open = true;
+                else if (strcmp(p->valuestring, "schedules") == 0) out->panel_schedules_open = true;
+            }
         }
     }
 
@@ -1000,6 +1019,8 @@ setup:
                 // Nothing selected — spawn picker
                 cog_spawn_picker(&render, &state.presets, url);
                 last_poll_frame = 0;
+                touching = false;
+                did_pan = false;
             }
         }
 
@@ -1100,7 +1121,8 @@ setup:
                         }
                     }
                     sync_canvas_from_state(&canvas, &state);
-                    canvas_add_panel_cards(&canvas, state.task_count, state.info_count, state.schedule_count);
+                    canvas_add_panel_cards(&canvas, state.task_count, state.info_count, state.schedule_count,
+                                           state.panel_pinboard_open, state.panel_info_open, state.panel_schedules_open);
                     if (selected >= state.agent_count) selected = state.agent_count - 1;
                     if (selected < 0) selected = 0;
                     snprintf(status_msg, sizeof(status_msg), "OK (%zu bytes)", poll_body_len);

@@ -119,7 +119,8 @@ int canvas_nav_nearest(const Canvas *cv, CanvasNavDir dir) {
     return best;
 }
 
-void canvas_add_panel_cards(Canvas *cv, int task_count, int info_count, int schedule_count) {
+void canvas_add_panel_cards(Canvas *cv, int task_count, int info_count, int schedule_count,
+                            bool pinboard_open, bool info_open, bool schedules_open) {
     float max_x = 0;
     float max_y = 0;
     for (int i = 0; i < cv->card_count; i++) {
@@ -130,7 +131,7 @@ void canvas_add_panel_cards(Canvas *cv, int task_count, int info_count, int sche
     float panel_x = max_x + 40;
     float panel_y = max_y > 0 ? max_y : 0;
 
-    if (task_count > 0 && cv->card_count < CANVAS_MAX_CARDS) {
+    if (pinboard_open && cv->card_count < CANVAS_MAX_CARDS) {
         Card *pb = &cv->cards[cv->card_count];
         memset(pb, 0, sizeof(*pb));
         strncpy(pb->id, "__pinboard__", sizeof(pb->id) - 1);
@@ -150,7 +151,7 @@ void canvas_add_panel_cards(Canvas *cv, int task_count, int info_count, int sche
         panel_y += CARD_DEFAULT_HEIGHT + 10;
     }
 
-    if (info_count > 0 && cv->card_count < CANVAS_MAX_CARDS) {
+    if (info_open && cv->card_count < CANVAS_MAX_CARDS) {
         Card *inf = &cv->cards[cv->card_count];
         memset(inf, 0, sizeof(*inf));
         strncpy(inf->id, "__info__", sizeof(inf->id) - 1);
@@ -170,7 +171,7 @@ void canvas_add_panel_cards(Canvas *cv, int task_count, int info_count, int sche
         panel_y += CARD_DEFAULT_HEIGHT + 10;
     }
 
-    if (schedule_count > 0 && cv->card_count < CANVAS_MAX_CARDS) {
+    if (schedules_open && cv->card_count < CANVAS_MAX_CARDS) {
         Card *sch = &cv->cards[cv->card_count];
         memset(sch, 0, sizeof(*sch));
         strncpy(sch->id, "__schedules__", sizeof(sch->id) - 1);
