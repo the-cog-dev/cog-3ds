@@ -59,12 +59,29 @@ ComposerResult cog_composer_run_chat(CogRender *r, const char *prompt,
                     ? context_count - CHAT_MAX_LINES : 0;
 
     while (aptMainLoop() && cog_keyboard_update(&kb)) {
+        // L/R scroll through output context on top screen
+        u32 kd = hidKeysDown();
+        if ((kd & KEY_L) && ctx_start > 0) ctx_start--;
+        if ((kd & KEY_R) && ctx_start < context_count - CHAT_MAX_LINES) ctx_start++;
+        // D-pad up/down also scroll context
+        if ((kd & KEY_DUP) && ctx_start > 0) ctx_start--;
+        if ((kd & KEY_DDOWN) && ctx_start < context_count - CHAT_MAX_LINES) ctx_start++;
+        if (ctx_start < 0) ctx_start = 0;
+
         cog_render_frame_begin(r);
         cog_render_target_top(r, THEME_BG_DARK);
 
         // Header
         cog_render_rect(0, 0, 400, CHAT_HEADER_H, THEME_BG_CANVAS);
         cog_render_text(r, prompt, 12, 3, THEME_FONT_LABEL, THEME_GOLD);
+        // Scroll indicator
+        if (context_count > CHAT_MAX_LINES) {
+            char scroll_info[16];
+            snprintf(scroll_info, sizeof(scroll_info), "%d/%d",
+                     ctx_start + CHAT_MAX_LINES, context_count);
+            cog_render_text_right(r, scroll_info, 392, 5,
+                                  THEME_FONT_FOOTER, THEME_TEXT_DIMMED);
+        }
         cog_render_rect(0, CHAT_HEADER_H, 400, 1, THEME_DIVIDER);
 
         // Context lines (agent output)
@@ -90,7 +107,7 @@ ComposerResult cog_composer_run_chat(CogRender *r, const char *prompt,
                         THEME_FONT_LABEL, THEME_TEXT_PRIMARY);
 
         // Hints
-        cog_render_text(r, "[A] send  [B] backspace  [Y] newline  [START] cancel",
+        cog_render_text(r, "[A] send [B] bksp [Y] newline [L/R] scroll [START] cancel",
                         6, CHAT_HINT_Y, THEME_FONT_FOOTER, THEME_TEXT_DIMMED);
 
         cog_render_target_bottom(r, THEME_BG_CANVAS);
