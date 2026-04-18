@@ -709,6 +709,11 @@ setup:
                     touch_start_ms = osGetTime();
                     did_pan = false;
                 } else {
+                    // Tapped empty canvas — deselect current card
+                    if (canvas.selected_idx >= 0 && canvas.selected_idx < canvas.card_count)
+                        canvas.cards[canvas.selected_idx].selected = false;
+                    canvas.selected_idx = -1;
+                    detail_scroll = 0;
                     did_pan = false;
                 }
                 touching = true;
