@@ -374,8 +374,17 @@ static void sync_canvas_from_state(Canvas *cv, const CogState *state) {
         c->enter_alpha = 1.0f;
         c->selected = false;
         c->lifted = false;
-        c->card_type = CARD_TYPE_AGENT_CARD;
-        c->draggable = true;
+        // Detect panel cards by status="panel" and cli=type
+        if (strcmp(a->status, "panel") == 0) {
+            if (strcmp(a->cli, "pinboard") == 0) c->card_type = CARD_TYPE_PINBOARD_CARD;
+            else if (strcmp(a->cli, "info") == 0) c->card_type = CARD_TYPE_INFO_CARD;
+            else if (strcmp(a->cli, "schedules") == 0) c->card_type = CARD_TYPE_SCHEDULE_CARD;
+            else c->card_type = CARD_TYPE_AGENT_CARD;
+            c->draggable = false;
+        } else {
+            c->card_type = CARD_TYPE_AGENT_CARD;
+            c->draggable = true;
+        }
 
         if (prev_selected[0] && strcmp(prev_selected, c->id) == 0) {
             cv->selected_idx = i;
@@ -1135,10 +1144,8 @@ setup:
                         }
                     }
                     sync_canvas_from_state(&canvas, &state);
-                    canvas_add_panel_cards(&canvas, state.task_count, state.info_count, state.schedule_count,
-                                           (const PanelState *)&state.panel_pinboard,
-                                           (const PanelState *)&state.panel_info,
-                                           (const PanelState *)&state.panel_schedules);
+                    // Panels now come through the agents array (status="panel")
+                    // so no separate canvas_add_panel_cards needed.
                     if (selected >= state.agent_count) selected = state.agent_count - 1;
                     if (selected < 0) selected = 0;
                     snprintf(status_msg, sizeof(status_msg), "OK (%zu bytes)", poll_body_len);
