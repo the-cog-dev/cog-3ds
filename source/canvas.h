@@ -14,7 +14,7 @@
 #define CANVAS_MAX_CARDS 35
 #define CANVAS_SCREEN_W  320
 #define CANVAS_SCREEN_H  240
-#define CANVAS_ZOOM_MIN  0.3f
+#define CANVAS_ZOOM_MIN  0.1f
 #define CANVAS_ZOOM_MAX  2.0f
 #define CANVAS_ZOOM_STEP 0.15f
 
@@ -61,7 +61,13 @@ void canvas_frame_all(Canvas *cv);
 typedef enum { CANVAS_NAV_UP, CANVAS_NAV_DOWN, CANVAS_NAV_LEFT, CANVAS_NAV_RIGHT } CanvasNavDir;
 int canvas_nav_nearest(const Canvas *cv, CanvasNavDir dir);
 
+typedef struct {
+    bool open;
+    float x, y, w, h;
+} PanelState;
+
 void canvas_add_panel_cards(Canvas *cv, int task_count, int info_count, int schedule_count,
-                            bool pinboard_open, bool info_open, bool schedules_open);
+                            const PanelState *pinboard, const PanelState *info,
+                            const PanelState *schedules);
 
 #endif

@@ -97,9 +97,10 @@ typedef struct {
     SpawnPresetList presets;
     ScheduleInfo schedules[MAX_SCHEDULES];
     int schedule_count;
-    bool panel_pinboard_open;
-    bool panel_info_open;
-    bool panel_schedules_open;
+    // Open panels with desktop positions
+    struct { bool open; float x, y, w, h; } panel_pinboard;
+    struct { bool open; float x, y, w, h; } panel_info;
+    struct { bool open; float x, y, w, h; } panel_schedules;
 } CogState;
 
 static const char *STATUS_COLOR_CODE(const char *status) {
@@ -275,18 +276,30 @@ static bool parse_state(const char *json_text, CogState *out) {
         }
     }
 
-    // Open panels
-    out->panel_pinboard_open = false;
-    out->panel_info_open = false;
-    out->panel_schedules_open = false;
+    // Open panels (now objects with type + positions)
+    memset(&out->panel_pinboard, 0, sizeof(out->panel_pinboard));
+    memset(&out->panel_info, 0, sizeof(out->panel_info));
+    memset(&out->panel_schedules, 0, sizeof(out->panel_schedules));
     cJSON *panels = cJSON_GetObjectItemCaseSensitive(root, "openPanels");
     if (cJSON_IsArray(panels)) {
         cJSON *p = NULL;
         cJSON_ArrayForEach(p, panels) {
-            if (cJSON_IsString(p) && p->valuestring) {
-                if (strcmp(p->valuestring, "pinboard") == 0) out->panel_pinboard_open = true;
-                else if (strcmp(p->valuestring, "info") == 0) out->panel_info_open = true;
-                else if (strcmp(p->valuestring, "schedules") == 0) out->panel_schedules_open = true;
+            cJSON *ptype = cJSON_GetObjectItemCaseSensitive(p, "type");
+            if (!cJSON_IsString(ptype)) continue;
+            cJSON *px = cJSON_GetObjectItemCaseSensitive(p, "x");
+            cJSON *py = cJSON_GetObjectItemCaseSensitive(p, "y");
+            cJSON *pw = cJSON_GetObjectItemCaseSensitive(p, "width");
+            cJSON *ph = cJSON_GetObjectItemCaseSensitive(p, "height");
+            float fx = cJSON_IsNumber(px) ? (float)px->valuedouble : 0;
+            float fy = cJSON_IsNumber(py) ? (float)py->valuedouble : 0;
+            float fw = cJSON_IsNumber(pw) ? (float)pw->valuedouble : 300;
+            float fh = cJSON_IsNumber(ph) ? (float)ph->valuedouble : 200;
+            if (strcmp(ptype->valuestring, "pinboard") == 0) {
+                out->panel_pinboard = (typeof(out->panel_pinboard)){true, fx, fy, fw, fh};
+            } else if (strcmp(ptype->valuestring, "info") == 0) {
+                out->panel_info = (typeof(out->panel_info)){true, fx, fy, fw, fh};
+            } else if (strcmp(ptype->valuestring, "schedules") == 0) {
+                out->panel_schedules = (typeof(out->panel_schedules)){true, fx, fy, fw, fh};
             }
         }
     }
@@ -1123,7 +1136,9 @@ setup:
                     }
                     sync_canvas_from_state(&canvas, &state);
                     canvas_add_panel_cards(&canvas, state.task_count, state.info_count, state.schedule_count,
-                                           state.panel_pinboard_open, state.panel_info_open, state.panel_schedules_open);
+                                           (const PanelState *)&state.panel_pinboard,
+                                           (const PanelState *)&state.panel_info,
+                                           (const PanelState *)&state.panel_schedules);
                     if (selected >= state.agent_count) selected = state.agent_count - 1;
                     if (selected < 0) selected = 0;
                     snprintf(status_msg, sizeof(status_msg), "OK (%zu bytes)", poll_body_len);
