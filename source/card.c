@@ -22,7 +22,8 @@ void card_draw(CogRender *r, const Card *c, float sx, float sy,
     if (c->card_type == CARD_TYPE_PINBOARD_CARD ||
         c->card_type == CARD_TYPE_INFO_CARD ||
         c->card_type == CARD_TYPE_SCHEDULE_CARD) {
-        u32 bg = 0xcc333333;
+        // Use the card's group color (matches desktop), with fixed dark alpha
+        u32 bg = (c->color & 0x00ffffff) | 0xcc000000;
         cog_render_rounded_rect(sx, sy, sw, sh, 4.0f, bg);
         cog_render_rect_outline(sx + 1, sy + 1, sw - 2, sh - 2, 1.0f, THEME_GOLD_DIM);
         const char *icon = (c->card_type == CARD_TYPE_PINBOARD_CARD) ? "Pinboard"
