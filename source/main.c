@@ -40,6 +40,7 @@
 #include "output_viewer.h"
 #include "spawn.h"
 #include "inbox.h"
+#include "trollbox.h"
 
 #define MAX_AGENTS 32
 
@@ -895,6 +896,7 @@ setup:
                 else if (sel_card->card_type == CARD_TYPE_INFO_CARD) ct = CARD_TYPE_INFO;
                 else if (sel_card->card_type == CARD_TYPE_SCHEDULE_CARD) ct = CARD_TYPE_SCHEDULE;
                 else if (sel_card->card_type == CARD_TYPE_INBOX_CARD) ct = CARD_TYPE_INBOX;
+                else if (sel_card->card_type == CARD_TYPE_TROLLBOX_CARD) ct = CARD_TYPE_TROLLBOX;
                 else ct = CARD_TYPE_AGENT;
 
                 MenuAction action = cog_action_menu(&render, ct, sel_card->name);
@@ -1150,6 +1152,15 @@ setup:
                     }
                     break;
                 }
+                case ACTION_OPEN_TROLLBOX: {
+                    // Trollbox modal owns its own poll loop. After it exits,
+                    // bump the workshop poll so any in-game changes that
+                    // accrued during chat are picked up.
+                    cog_trollbox_run(&render, url);
+                    last_poll_frame = 0;
+                    strncpy(status_msg, "Welcome back", sizeof(status_msg));
+                    break;
+                }
                 case ACTION_SPAWN:
                 case ACTION_NONE:
                     break;
@@ -1256,6 +1267,10 @@ setup:
                                                state.inbox_count,
                                                -200.0f, -160.0f);
                     }
+                    // Trollbox panel — always synthesized so the user can
+                    // open chat from the 3DS even before any messages
+                    // exist. Modal handles offline state.
+                    canvas_add_trollbox_panel(&canvas, -360.0f, -160.0f);
                     if (selected >= state.agent_count) selected = state.agent_count - 1;
                     if (selected < 0) selected = 0;
                     snprintf(status_msg, sizeof(status_msg), "OK (%zu bytes)", poll_body_len);

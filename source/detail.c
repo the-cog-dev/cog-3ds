@@ -238,6 +238,23 @@ static void draw_schedule_body(CogRender *r, const void *schedules, int schedule
     }
 }
 
+static void draw_trollbox_body(CogRender *r) {
+    float y = HEADER_H + 8;
+    cog_render_text(r, "Trollbox", 12, y, THEME_FONT_HEADER, THEME_GOLD);
+    y += 28;
+    cog_render_text(r, "Realtime crew chat. Bridges through",
+                    12, y, THEME_FONT_LABEL, THEME_TEXT_PRIMARY); y += 18;
+    cog_render_text(r, "the desktop's Trollbox panel — open it",
+                    12, y, THEME_FONT_LABEL, THEME_TEXT_PRIMARY); y += 18;
+    cog_render_text(r, "on PC for chat to work.",
+                    12, y, THEME_FONT_LABEL, THEME_TEXT_PRIMARY); y += 26;
+    cog_render_rect(12, y, TOP_W - 24, 1, THEME_DIVIDER); y += 12;
+    cog_render_text(r, "Press [A] to open chat",
+                    12, y, THEME_FONT_FOOTER, THEME_GOLD); y += 18;
+    cog_render_text(r, "[Y] type message  [X] change nick",
+                    12, y, THEME_FONT_FOOTER, THEME_TEXT_DIMMED);
+}
+
 static void draw_inbox_body(CogRender *r, int inbox_count, int inbox_unread) {
     float y = HEADER_H + 8;
     cog_render_text(r, "Inbox", 12, y, THEME_FONT_HEADER, THEME_GOLD);
@@ -285,6 +302,8 @@ void detail_draw(CogRender *r, const char *project_name,
             draw_schedule_body(r, schedules, schedule_count, detail_scroll);
         } else if (card_or_null->card_type == CARD_TYPE_INBOX_CARD) {
             draw_inbox_body(r, inbox_count, inbox_unread);
+        } else if (card_or_null->card_type == CARD_TYPE_TROLLBOX_CARD) {
+            draw_trollbox_body(r);
         } else {
             draw_body(r, card_or_null);
         }

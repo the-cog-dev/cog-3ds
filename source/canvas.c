@@ -206,3 +206,24 @@ void canvas_add_inbox_panel(Canvas *cv, int unread, int total,
     ib->draggable = false;
     cv->card_count++;
 }
+
+void canvas_add_trollbox_panel(Canvas *cv, float world_x, float world_y) {
+    if (cv->card_count >= CANVAS_MAX_CARDS) return;
+    Card *tb = &cv->cards[cv->card_count];
+    memset(tb, 0, sizeof(*tb));
+    strncpy(tb->id, "__trollbox__", sizeof(tb->id) - 1);
+    strncpy(tb->name, "Trollbox", sizeof(tb->name) - 1);
+    strncpy(tb->cli, "crew chat", sizeof(tb->cli) - 1);
+    tb->x = world_x;
+    tb->y = world_y;
+    tb->width = 140.0f;
+    tb->height = 60.0f;
+    // Slight gold tint to distinguish from data panels — same gold as the
+    // app accent so the trollbox card pops on the canvas.
+    tb->color = 0xff426ea8;  // bluish to nod at "chat"
+    tb->lift_scale = 1.0f;
+    tb->enter_alpha = 1.0f;
+    tb->card_type = CARD_TYPE_TROLLBOX_CARD;
+    tb->draggable = false;
+    cv->card_count++;
+}

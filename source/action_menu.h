@@ -10,6 +10,7 @@ typedef enum {
     CARD_TYPE_INFO,
     CARD_TYPE_SCHEDULE,
     CARD_TYPE_INBOX,
+    CARD_TYPE_TROLLBOX,
     CARD_TYPE_NONE
 } CardType;
 
@@ -28,7 +29,9 @@ typedef enum {
     ACTION_RESUME_SCHEDULE,
     ACTION_SPAWN,
     // Inbox panel: opens the inbox modal viewer (cog_inbox_run).
-    ACTION_OPEN_INBOX
+    ACTION_OPEN_INBOX,
+    // Trollbox panel: opens the chat modal viewer (cog_trollbox_run).
+    ACTION_OPEN_TROLLBOX
 } MenuAction;
 
 // Show a context-sensitive action menu overlay. Blocks until the user

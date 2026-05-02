@@ -16,7 +16,8 @@ typedef enum {
     CARD_TYPE_PINBOARD_CARD,
     CARD_TYPE_INFO_CARD,
     CARD_TYPE_SCHEDULE_CARD,
-    CARD_TYPE_INBOX_CARD
+    CARD_TYPE_INBOX_CARD,
+    CARD_TYPE_TROLLBOX_CARD
 } CardTypeEnum;
 
 typedef struct {

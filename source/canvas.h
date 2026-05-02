@@ -77,4 +77,9 @@ void canvas_add_panel_cards(Canvas *cv, int task_count, int info_count, int sche
 void canvas_add_inbox_panel(Canvas *cv, int unread, int total,
                             float world_x, float world_y);
 
+// Trollbox panel — also synthetic. Always synthesized so the user can
+// open chat from the 3DS even when no one's posted yet. Online count is
+// fetched lazily by the modal viewer; the badge here just says "chat".
+void canvas_add_trollbox_panel(Canvas *cv, float world_x, float world_y);
+
 #endif

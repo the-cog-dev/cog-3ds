@@ -60,6 +60,11 @@ static const MenuItem INBOX_ITEMS[] = {
 };
 static const int INBOX_ITEM_COUNT = 1;
 
+static const MenuItem TROLLBOX_ITEMS[] = {
+    { "Open Trollbox", ACTION_OPEN_TROLLBOX },
+};
+static const int TROLLBOX_ITEM_COUNT = 1;
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 static const char *card_type_label(CardType t) {
     switch (t) {
@@ -68,6 +73,7 @@ static const char *card_type_label(CardType t) {
         case CARD_TYPE_INFO:     return "Info";
         case CARD_TYPE_SCHEDULE: return "Schedule";
         case CARD_TYPE_INBOX:    return "Inbox";
+        case CARD_TYPE_TROLLBOX: return "Trollbox";
         case CARD_TYPE_NONE:     return "Canvas";
         default:                 return "";
     }
@@ -96,6 +102,10 @@ static void get_items(CardType t,
         case CARD_TYPE_INBOX:
             *items_out = INBOX_ITEMS;
             *count_out = INBOX_ITEM_COUNT;
+            break;
+        case CARD_TYPE_TROLLBOX:
+            *items_out = TROLLBOX_ITEMS;
+            *count_out = TROLLBOX_ITEM_COUNT;
             break;
         case CARD_TYPE_NONE:
         default:
