@@ -55,6 +55,11 @@ static const MenuItem NONE_ITEMS[] = {
 };
 static const int NONE_ITEM_COUNT = 1;
 
+static const MenuItem INBOX_ITEMS[] = {
+    { "Open Inbox", ACTION_OPEN_INBOX },
+};
+static const int INBOX_ITEM_COUNT = 1;
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 static const char *card_type_label(CardType t) {
     switch (t) {
@@ -62,6 +67,7 @@ static const char *card_type_label(CardType t) {
         case CARD_TYPE_PINBOARD: return "Pinboard";
         case CARD_TYPE_INFO:     return "Info";
         case CARD_TYPE_SCHEDULE: return "Schedule";
+        case CARD_TYPE_INBOX:    return "Inbox";
         case CARD_TYPE_NONE:     return "Canvas";
         default:                 return "";
     }
@@ -86,6 +92,10 @@ static void get_items(CardType t,
         case CARD_TYPE_SCHEDULE:
             *items_out = SCHEDULE_ITEMS;
             *count_out = SCHEDULE_ITEM_COUNT;
+            break;
+        case CARD_TYPE_INBOX:
+            *items_out = INBOX_ITEMS;
+            *count_out = INBOX_ITEM_COUNT;
             break;
         case CARD_TYPE_NONE:
         default:

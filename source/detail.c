@@ -238,13 +238,43 @@ static void draw_schedule_body(CogRender *r, const void *schedules, int schedule
     }
 }
 
+static void draw_inbox_body(CogRender *r, int inbox_count, int inbox_unread) {
+    float y = HEADER_H + 8;
+    cog_render_text(r, "Inbox", 12, y, THEME_FONT_HEADER, THEME_GOLD);
+    y += 28;
+    char summary[64];
+    snprintf(summary, sizeof(summary), "%d total  |  %d unread",
+             inbox_count, inbox_unread);
+    u32 col = inbox_unread > 0 ? THEME_GOLD : THEME_TEXT_DIMMED;
+    cog_render_text(r, summary, 12, y, THEME_FONT_LABEL, col);
+    y += 22;
+    cog_render_rect(12, y, TOP_W - 24, 1, THEME_DIVIDER);
+    y += 12;
+    cog_render_text(r, "Orchestrator notifications and team",
+                    12, y, THEME_FONT_LABEL, THEME_TEXT_PRIMARY);
+    y += 18;
+    cog_render_text(r, "proposals from your agents land here.",
+                    12, y, THEME_FONT_LABEL, THEME_TEXT_PRIMARY);
+    y += 26;
+    if (inbox_count == 0) {
+        cog_render_text(r, "(empty)", 12, y, THEME_FONT_FOOTER, THEME_TEXT_DIMMED);
+    } else {
+        cog_render_text(r, "Press [A] to open and approve/reject",
+                        12, y, THEME_FONT_FOOTER, THEME_GOLD);
+        y += 18;
+        cog_render_text(r, "team proposals or mark as read.",
+                        12, y, THEME_FONT_FOOTER, THEME_TEXT_DIMMED);
+    }
+}
+
 void detail_draw(CogRender *r, const char *project_name,
                  const Card *card_or_null, int agent_count,
                  int connection_count,
                  const void *tasks, int task_count,
                  const void *infos, int info_count,
                  const void *schedules, int schedule_count,
-                 int detail_scroll, int pinboard_tab) {
+                 int detail_scroll, int pinboard_tab,
+                 int inbox_count, int inbox_unread) {
     draw_header(r, project_name, agent_count, connection_count);
     if (card_or_null) {
         if (card_or_null->card_type == CARD_TYPE_PINBOARD_CARD) {
@@ -253,6 +283,8 @@ void detail_draw(CogRender *r, const char *project_name,
             draw_info_body(r, infos, info_count, detail_scroll);
         } else if (card_or_null->card_type == CARD_TYPE_SCHEDULE_CARD) {
             draw_schedule_body(r, schedules, schedule_count, detail_scroll);
+        } else if (card_or_null->card_type == CARD_TYPE_INBOX_CARD) {
+            draw_inbox_body(r, inbox_count, inbox_unread);
         } else {
             draw_body(r, card_or_null);
         }

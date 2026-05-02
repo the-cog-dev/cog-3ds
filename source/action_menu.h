@@ -9,6 +9,7 @@ typedef enum {
     CARD_TYPE_PINBOARD,
     CARD_TYPE_INFO,
     CARD_TYPE_SCHEDULE,
+    CARD_TYPE_INBOX,
     CARD_TYPE_NONE
 } CardType;
 
@@ -25,7 +26,9 @@ typedef enum {
     ACTION_DELETE_NOTE,
     ACTION_PAUSE_SCHEDULE,
     ACTION_RESUME_SCHEDULE,
-    ACTION_SPAWN
+    ACTION_SPAWN,
+    // Inbox panel: opens the inbox modal viewer (cog_inbox_run).
+    ACTION_OPEN_INBOX
 } MenuAction;
 
 // Show a context-sensitive action menu overlay. Blocks until the user

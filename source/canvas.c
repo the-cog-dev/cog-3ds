@@ -181,3 +181,28 @@ void canvas_add_panel_cards(Canvas *cv, int task_count, int info_count, int sche
         cv->card_count++;
     }
 }
+
+void canvas_add_inbox_panel(Canvas *cv, int unread, int total,
+                            float world_x, float world_y) {
+    if (cv->card_count >= CANVAS_MAX_CARDS) return;
+    Card *ib = &cv->cards[cv->card_count];
+    memset(ib, 0, sizeof(*ib));
+    strncpy(ib->id, "__inbox__", sizeof(ib->id) - 1);
+    strncpy(ib->name, "Inbox", sizeof(ib->name) - 1);
+    // Show unread as badge in cli slot (re-used as subtitle for panel cards).
+    // "5 unread" reads better than just "5"; falls back to total when all read.
+    char sub[24];
+    if (unread > 0) snprintf(sub, sizeof(sub), "%d unread", unread);
+    else            snprintf(sub, sizeof(sub), "%d total", total);
+    strncpy(ib->cli, sub, sizeof(ib->cli) - 1);
+    ib->x = world_x;
+    ib->y = world_y;
+    ib->width = 140.0f;   // wider than other panels so the badge text fits
+    ib->height = 60.0f;
+    ib->color = 0xff333333;
+    ib->lift_scale = 1.0f;
+    ib->enter_alpha = 1.0f;
+    ib->card_type = CARD_TYPE_INBOX_CARD;
+    ib->draggable = false;
+    cv->card_count++;
+}

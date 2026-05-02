@@ -70,4 +70,11 @@ void canvas_add_panel_cards(Canvas *cv, int task_count, int info_count, int sche
                             const PanelState *pinboard, const PanelState *info,
                             const PanelState *schedules);
 
+// Inbox is a synthetic panel — no equivalent desktop window — that the 3DS
+// only spawns when the user has unread orchestrator messages or a pending
+// team proposal. unread is shown as the badge text. Position is fixed in
+// world space so the user can find it via D-pad/zoom.
+void canvas_add_inbox_panel(Canvas *cv, int unread, int total,
+                            float world_x, float world_y);
+
 #endif

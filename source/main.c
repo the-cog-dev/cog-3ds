@@ -39,6 +39,7 @@
 #include "composer.h"
 #include "output_viewer.h"
 #include "spawn.h"
+#include "inbox.h"
 
 #define MAX_AGENTS 32
 
@@ -97,6 +98,10 @@ typedef struct {
     SpawnPresetList presets;
     ScheduleInfo schedules[MAX_SCHEDULES];
     int schedule_count;
+    // Inbox messages — orchestrator notifications + team proposals
+    InboxMsg inbox[INBOX_MAX_MESSAGES];
+    int inbox_count;
+    int inbox_unread;
     // Open panels with desktop positions
     struct { bool open; float x, y, w, h; } panel_pinboard;
     struct { bool open; float x, y, w, h; } panel_info;
@@ -273,6 +278,50 @@ static bool parse_state(const char *json_text, CogState *out) {
             si->interval_minutes = cJSON_IsNumber(intv) ? intv->valueint : 0;
             json_get_string(sched, "status", si->status, sizeof(si->status));
             out->schedule_count++;
+        }
+    }
+
+    // Inbox messages — recent N preview shipped in /state. Each may carry
+    // proposalId + team summary so the 3DS can render approve/reject without
+    // a second roundtrip.
+    out->inbox_count = 0;
+    out->inbox_unread = 0;
+    cJSON *unread = cJSON_GetObjectItemCaseSensitive(root, "inboxUnread");
+    if (cJSON_IsNumber(unread)) out->inbox_unread = unread->valueint;
+    cJSON *inbox_arr = cJSON_GetObjectItemCaseSensitive(root, "inbox");
+    if (cJSON_IsArray(inbox_arr)) {
+        cJSON *m = NULL;
+        cJSON_ArrayForEach(m, inbox_arr) {
+            if (out->inbox_count >= INBOX_MAX_MESSAGES) break;
+            InboxMsg *im = &out->inbox[out->inbox_count];
+            memset(im, 0, sizeof(*im));
+            json_get_string(m, "id", im->id, sizeof(im->id));
+            json_get_string(m, "agentName", im->agent_name, sizeof(im->agent_name));
+            json_get_string(m, "message", im->message, sizeof(im->message));
+            json_get_string(m, "priority", im->priority, sizeof(im->priority));
+            json_get_string(m, "createdAt", im->created_at, sizeof(im->created_at));
+            cJSON *ra = cJSON_GetObjectItemCaseSensitive(m, "readAt");
+            im->read = cJSON_IsString(ra) && ra->valuestring && ra->valuestring[0];
+            json_get_string(m, "proposalId", im->proposal_id, sizeof(im->proposal_id));
+            if (im->proposal_id[0]) {
+                json_get_string(m, "proposalSummary", im->proposal_summary, sizeof(im->proposal_summary));
+                json_get_string(m, "proposalStatus", im->proposal_status, sizeof(im->proposal_status));
+                cJSON *pa_arr = cJSON_GetObjectItemCaseSensitive(m, "proposalAgents");
+                if (cJSON_IsArray(pa_arr)) {
+                    cJSON *pa = NULL;
+                    cJSON_ArrayForEach(pa, pa_arr) {
+                        if (im->proposal_agent_count >= INBOX_MAX_PROP_AGENTS) break;
+                        InboxProposalAgent *ipa = &im->proposal_agents[im->proposal_agent_count];
+                        memset(ipa, 0, sizeof(*ipa));
+                        json_get_string(pa, "name",  ipa->name,  sizeof(ipa->name));
+                        json_get_string(pa, "cli",   ipa->cli,   sizeof(ipa->cli));
+                        json_get_string(pa, "model", ipa->model, sizeof(ipa->model));
+                        json_get_string(pa, "role",  ipa->role,  sizeof(ipa->role));
+                        im->proposal_agent_count++;
+                    }
+                }
+            }
+            out->inbox_count++;
         }
     }
 
@@ -845,6 +894,7 @@ setup:
                 if (sel_card->card_type == CARD_TYPE_PINBOARD_CARD) ct = CARD_TYPE_PINBOARD;
                 else if (sel_card->card_type == CARD_TYPE_INFO_CARD) ct = CARD_TYPE_INFO;
                 else if (sel_card->card_type == CARD_TYPE_SCHEDULE_CARD) ct = CARD_TYPE_SCHEDULE;
+                else if (sel_card->card_type == CARD_TYPE_INBOX_CARD) ct = CARD_TYPE_INBOX;
                 else ct = CARD_TYPE_AGENT;
 
                 MenuAction action = cog_action_menu(&render, ct, sel_card->name);
@@ -1082,6 +1132,24 @@ setup:
                     }
                     break;
                 }
+                case ACTION_OPEN_INBOX: {
+                    // The /state snapshot already includes the inbox preview;
+                    // open the modal viewer with what we have. Mark-read /
+                    // approve / reject all POST inline. Bumping last_poll_frame
+                    // forces an immediate re-poll on return so the badge
+                    // refreshes.
+                    if (state.inbox_count > 0) {
+                        bool changed = cog_inbox_run(&render, url,
+                                                     state.inbox, state.inbox_count);
+                        if (changed) {
+                            strncpy(status_msg, "Inbox updated", sizeof(status_msg));
+                            last_poll_frame = 0;
+                        }
+                    } else {
+                        strncpy(status_msg, "Inbox empty", sizeof(status_msg));
+                    }
+                    break;
+                }
                 case ACTION_SPAWN:
                 case ACTION_NONE:
                     break;
@@ -1178,7 +1246,16 @@ setup:
                     }
                     sync_canvas_from_state(&canvas, &state);
                     // Panels now come through the agents array (status="panel")
-                    // so no separate canvas_add_panel_cards needed.
+                    // so no separate canvas_add_panel_cards needed. Inbox is
+                    // an exception: it's synthesized client-side here when the
+                    // user has any messages — desktop has no equivalent canvas
+                    // window for it. Park it at a fixed offset above the
+                    // workshop origin so it's findable via D-pad/zoom.
+                    if (state.inbox_count > 0 || state.inbox_unread > 0) {
+                        canvas_add_inbox_panel(&canvas, state.inbox_unread,
+                                               state.inbox_count,
+                                               -200.0f, -160.0f);
+                    }
                     if (selected >= state.agent_count) selected = state.agent_count - 1;
                     if (selected < 0) selected = 0;
                     snprintf(status_msg, sizeof(status_msg), "OK (%zu bytes)", poll_body_len);
@@ -1213,7 +1290,8 @@ setup:
                         state.tasks, state.task_count,
                         state.infos, state.info_count,
                         state.schedules, state.schedule_count,
-                        detail_scroll, pinboard_tab);
+                        detail_scroll, pinboard_tab,
+                        state.inbox_count, state.inbox_unread);
             cog_render_target_bottom(&render, THEME_BG_CANVAS);
             canvas_draw(&render, &canvas);
             // Status bar at bottom of canvas
